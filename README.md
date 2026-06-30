@@ -1,6 +1,6 @@
 # Literaturverzeichnisprüfung — Skill
 
-Ein KI-Skill zur systematischen Prüfung akademischer Literaturverzeichnisse auf Fehler und halluzinierte Quellen. Jede Verifikation erfolgt durch Live-Abfragen bei bibliografischen Datenbanken — nicht aus dem Gedächtnis der KI.
+Ein KI-Skill zur systematischen Prüfung akademischer Literaturverzeichnisse auf Fehler und halluzinierte Quellen. Jede Verifikation erfolgt durch Live-Abfragen bei bibliografischen Datenbanken — nicht aus den Trainingsdaten der KI.
 
 ---
 
