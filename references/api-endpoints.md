@@ -3,15 +3,16 @@
 > **Effizienz-Grundregeln (gelten für ALLE Datenbanken):**
 > 
 > 1. **Schlank abfragen.** Immer das leichteste Schema/Fieldset nutzen: K10plus → `recordSchema=dc`,
->    OpenAlex/Crossref → `select=`, DOI-Resolve → CSL-JSON. Nie das volle Objekt holen, wenn ein
->    sparse Fieldset reicht.
+>    DNB → `recordSchema=oai_dc`, OpenAlex/Crossref → `select=`, DOI-Resolve → Crossref
+>    `filter=doi:`+`select=`. Nie das volle Objekt holen, wenn ein sparse Fieldset reicht.
 > 2. **Wenige Treffer.** Ergebnislisten auf **2–3** begrenzen (`per_page`/`rows`/`limit`/`size`/
 >    `maximumRecords`). Bei gezielter Autor+Titel+Jahr-Abfrage steht der richtige Treffer fast immer ganz oben.
 > 3. **Sparse-then-Full-Fallback.** Wenn ein schlank abgefragter Treffer ein Vergleichsfeld vermissen
 >    lässt, mehrdeutig ist oder das Parsing scheitert: **genau diese eine Quelle** noch einmal voll
 >    abrufen (ohne `select=` / mit MARCXML). Nie pauschal auf das fette Objekt zurückfallen.
 > 4. **Identifier zuerst.** DOI/ISBN direkt auflösen, bevor eine Titel/Autor-Kaskade startet (billigster,
->    sicherster Treffer). Mehrere DOIs lassen sich bei OpenAlex in einem Call bündeln (`filter=doi:a|b|c`).
+>    sicherster Treffer). Mehrere DOIs lassen sich bei OpenAlex in einem Call bündeln (`filter=doi:a|b|c`);
+>    **ohne OpenAlex-Key** bei Crossref (`filter=doi:A,doi:B`, kommagetrennt — siehe Crossref-Abschnitt).
 
 ## Robuste Ausführung & Fallback-Protokoll (ZUERST lesen)
 
@@ -33,7 +34,13 @@ auf allgemeine Websuche aus (und zieht Amazon/ZVAB statt Bibliothekskatalogen he
    Datenbank-Ausfall **nicht unterscheidbar**.
 
 1. Bei 403/Länge: URL kürzen (siehe OpenAlex-Trim-Reihenfolge) und **einmal** erneut.
-2. Sonst: **einmal** erneut (kurz warten, Rate-Limit-Wartezeit beachten).
+2. Sonst: **einmal mit VARIIERTER Query** erneut — **nie wortgleich**. Viele Agent-Umgebungen
+   **cachen `web_fetch`-Antworten pro URL**; die identische URL erneut zu senden liefert denselben
+   (auch denselben leeren) Body und ist als Retry wertlos. Variieren in dieser Reihenfolge:
+   (a) vollständigerer Titel inkl. Stoppwörter/Untertitel-Anfang, (b) zweiten Autor in den
+   Autor-Parameter aufnehmen bzw. auf ihn wechseln, (c) andere Kerntitel-Keyword-Mischung.
+   Leere Bodies sind oft **query-spezifisch reproduzierbar** (mutmaßlich langsame Suchen mit sehr
+   häufigen Wörtern → Proxy-Timeout); eine variierte Query auf dasselbe Werk trifft dann sofort.
 3. Scheitert es wieder: **zur nächsten Datenbank der Kaskade** weitergehen (Routing-Datei). Die
    Datenbank für den Rest der Sitzung als „nicht erreichbar" im Transparenz-Log vermerken, wenn sie
    2× am Stück technisch fehlschlägt.
@@ -47,15 +54,21 @@ nicht, wenn nur technische Fehlschläge vorlagen. Andernfalls: weitersuchen oder
 **Feldsemantik-Vorbehalt:** Ein 0-Ergebnis zählt nur, wenn die Query korrekt gebaut war — Titel-Keywords
 ausschließlich aus dem Titelfeld, Autor ausschließlich im Autor-Index. `pica.tit=Crozier Zwänge` (Autor
 im Titel-Index) erzeugt ein formal valides, aber bedeutungsloses 0-Ergebnis. **Vor jedem 🔴 IV:** eine
-Gegenprobe per freier Schlüsselwortsuche ohne Index (K10plus `query=KERNTITEL+AUTOR`) — robust gegen
-Feldsemantik-Fehler. **Bei mehreren Autoren/Herausgebern** zusätzlich **mindestens einen zweiten Namen**
-als Suchterm einsetzen (z. B. `pica.all=ZWEITER_NAME+KERNTITEL`); der Erstautor ist nicht immer der am
+Gegenprobe per freier K10plus-Suche — **exakt** das Muster
+`query=pica.all%3DKERNTITEL_KEYWORDS+AUTOR_NACHNAME` (kopierfertig im K10plus-Abschnitt → freie
+Suche) — robust gegen Feldsemantik-Fehler. **Gültigkeit:** Die Gegenprobe muss Autor-Nachname UND
+Kerntitel-Keywords enthalten und eine überschaubare Trefferzahl liefern; eine unspezifische Query
+(nur ein Allerweltswort oder nur ein Jahr, ohne Autor) mit dreistelliger+ Trefferzahl ist KEINE
+ausgeführte Gegenprobe. **Bei mehreren Autoren/Herausgebern** zusätzlich **mindestens einen zweiten Namen**
+als Suchterm einsetzen (z. B. `pica.all%3DZWEITER_NAME+KERNTITEL`); der Erstautor ist nicht immer der am
 besten katalogisierte. Diese Erweiterung kann nur zusätzliche Treffer erzeugen, nie einen bestehenden
 entwerten — sie wirkt allein gegen falsche 🔴-IV-Urteile.
 
 **4. Canary vor dem Fan-out:** Bevor eine **neue** Query-Form/Endpoint parallel in einer Welle (4–6
 Calls) abgefeuert wird, **erst EINEN** Test-Call senden und prüfen, dass wohlgeformtes JSON zurückkommt.
-Erst dann auffächern. Scheitert der Canary technisch, erst das Muster reparieren (kürzen) bzw. die DB für
+**Cache-Vorbehalt:** Als Canary nie eine in dieser Sitzung (oder als konstantes Testwort in jeder
+Sitzung) schon verwendete URL senden — gecachte Antworten können eine tote DB als lebendig ausweisen;
+ein sitzungseindeutiges Suchwort erzwingt den Live-Call. Erst dann auffächern. Scheitert der Canary technisch, erst das Muster reparieren (kürzen) bzw. die DB für
 diese Welle überspringen — so verbrennt nicht eine ganze Welle an einem kaputten Muster.
 
 **5. Resiliente Reihenfolge bei Artikeln:** Fällt OpenAlex technisch aus, ist **Crossref** der nächste
@@ -64,6 +77,23 @@ Schritt — dessen URLs sind kurz (kein langer Filter). Crossref also **aktiv** 
 **6. WebSearch ist nur letztes Mittel** — Regeln im Abschnitt „Vorbereitete Suchlinks" und in SKILL.md.
 JS-gerenderte Seiten gehen an Claude-in-Chrome, nicht an `web_fetch` (Abschnitt „Nicht per web_fetch
 abrufbare Verlagsseiten").
+
+**7. Bekannte Umgebungsausfälle (geteilte Agent-Umgebungen → leerer Body).** Die folgenden Endpunkte
+liefern aus vielen geteilten Agent-Umgebungen (Proxy-IP/fehlende Header) reproduzierbar einen leeren
+Body, obwohl dieselben URLs vom eigenen Rechner funktionieren. **Regel:** Der **erste** Call einer
+Sitzung an einen dieser Endpunkte ist zugleich sein **Canary** — scheitert er, den Endpunkt
+**sitzungsweit überspringen** (Transparenz-Log) und **nie** in parallele Wellen aufnehmen; kein
+Retry-Sturm. Ein leerer Body dieser Endpunkte ist immer ein technischer Fehlschlag, nie ein 0-Ergebnis.
+
+| Endpunkt | Typisches Verhalten | Ausweichweg |
+|---|---|---|
+| OpenAlex (keyless) | leerer Body | `--openalex-key` oder Crossref-primäre Kaskade |
+| lobid `/resources/search` | leerer Body | K10plus (DC) / DNB; lobid-Weblink als manueller Prüflink |
+| Semantic Scholar (keyless) | leerer Body | ohne `--s2-key` gar nicht abfragen |
+| Open Library `search.json` | leerer Body | nur `/isbn/`-Lookup nutzen (funktioniert); Titel/Autor → K10plus |
+| arXiv `export.arxiv.org` | leerer Body | arXiv-DOIs (`10.48550/arXiv.…`) via Crossref/OpenAlex auflösen |
+| ZBW EconBiz | leerer Body | OpenAlex/Crossref/K10plus; EconBiz-Weblink als Prüflink |
+| doi.org ohne Accept-Header | leerer Body (JS-Verlage) | Crossref `filter=doi:` (siehe Crossref) |
 
 ---
 
@@ -94,15 +124,20 @@ Crossref-Fallback (siehe unten). Die ausführliche Herleitung (Live-A/B-Test) st
 
 **Konsequenz — OpenAlex-Canary ganz an den Anfang (vor Welle 0):**
 
-1. **Key vorhanden:** Canary **mit** Key senden
-   (`GET https://api.openalex.org/works?search=test&per_page=1&api_key=…`). Scheitert auch dieser
-   technisch → OpenAlex sitzungsweit deaktivieren (echtes Netzwerkproblem, selten).
+1. **Key vorhanden:** Canary **mit** Key senden — mit **sitzungseindeutigem Suchwort**
+   (`GET https://api.openalex.org/works?search=canary-JJJJMMTT-hhmm&per_page=1&api_key=…`,
+   Datum/Uhrzeit einsetzen). **Nie** ein konstantes Testwort wie `search=test` verwenden: Viele
+   Agent-Umgebungen cachen `web_fetch`-Antworten pro URL, ein konstanter Canary kann aus dem Cache
+   „gelingen", obwohl OpenAlex aktuell leer antwortet. 0 Treffer sind okay — entscheidend ist
+   wohlgeformtes JSON (`meta`/`results`). Scheitert der einzigartige Canary
+   technisch → OpenAlex sitzungsweit deaktivieren.
 2. **Kein Key:** Keyless-Canary senden. Kommt kein wohlgeformtes JSON (der Normalfall in geteilten Agent-Umgebungen), wurde
    die Key-Frage bereits in Step 0 gestellt — hier nicht erneut fragen. Liegt kein Key vor: OpenAlex für
    die **gesamte Sitzung** als „nicht nutzbar (kein API-Key)" markieren (Transparenz-Log) und auf die
    **Crossref-primäre Artikel-Kaskade** umschalten (Crossref → Semantic Scholar → Fach-DB). Keine
    weiteren OpenAlex-Versuche pro Quelle.
-3. Ohne OpenAlex laufen Batch-DOI-Lookups über Crossref-Einzelauflösung (`doi.org` CSL-JSON).
+3. Ohne OpenAlex laufen Batch-DOI-Lookups über Crossref (`filter=doi:A,doi:B`, kommagetrennt —
+   siehe Crossref-Abschnitt).
 
 **Mid-Session-Abbruch (Canary gelang, OpenAlex fällt später aus):** Der Canary kann zu Sitzungsbeginn
 gelingen, danach aber (z. B. nach Kontext-Komprimierung oder bei aufgebrauchtem Tageskontingent)
@@ -236,13 +271,29 @@ GET https://api.crossref.org/works?query.bibliographic=TITLE_KEYWORDS&query.auth
 > `mailto=` weglassen (Trim-Reihenfolge wie bei OpenAlex). Ein verkürzter Treffer bedeutet **nicht**,
 > dass Crossref den vollen Titel abgelehnt hätte.
 
-**Direkter DOI-Lookup (am zuverlässigsten, Einzelwerk):**
+**⭐ Direkter DOI-Lookup — über die Listen-Route mit `filter=doi:` (sparse, live verifiziert):**
 
 ```
-GET https://api.crossref.org/works/10.xxxx/xxxx?select=DOI,title,author,published,container-title,publisher,ISBN,type&mailto=user@example.com
+GET https://api.crossref.org/works?filter=doi:10.xxxx/xxxx&select=DOI,title,author,published,container-title,publisher,ISBN,type&rows=1&mailto=user@example.com
 ```
 
-**DOI auflösen + verifizieren — bevorzugt die kompakte CSL-JSON** (verwenden, wenn ein DOI im Original steht):
+**Batch mehrerer DOIs in EINEM Call** (kommagetrennt, **max. ~5 DOIs** wegen URL-Länge) — funktioniert
+**ohne Key** und ist damit der Standard-Batch-Weg der Welle 0, wenn kein OpenAlex-Key vorliegt:
+
+```
+GET https://api.crossref.org/works?filter=doi:10.xxxx/aaa,doi:10.yyyy/bbb&select=DOI,title,author,published,container-title&rows=5&mailto=user@example.com
+```
+
+Ein DOI, der nicht im Ergebnis auftaucht (`total-results` kleiner als die Anzahl der angefragten
+DOIs), ist bei Crossref nicht registriert → für diesen DOI OpenAlex-Lookup bzw. reguläre Kaskade.
+
+> **⚠️ `select=` funktioniert NUR auf der Listen-Route `/works?…`.** Auf der Singleton-Route
+> (`/works/10.xxxx/xxxx?select=…`) liefert `select=` einen Fehler, der in `web_fetch` als **leerer
+> Body** erscheint (live verifiziert, deterministisch) — nicht als Ausfall deuten. Der
+> Singleton-Lookup **ohne** `select=` funktioniert, liefert aber das volle Objekt inkl. `abstract`
+> und `reference[]` — nur als Sparse-then-Full-Fallback verwenden.
+
+**DOI auflösen via doi.org (CSL-JSON) — NUR wenn das Fetch-Tool Request-Header setzen kann:**
 
 ```
 GET https://doi.org/10.xxxx/xxxx
@@ -253,6 +304,12 @@ Content-Negotiation liefert ein schlankes CSL-Objekt (Titel, Autoren, Jahr, Cont
 vollen Crossref-Antwort. Felder: `title`, `author[].family/given`, `issued.date-parts[0][0]`,
 `container-title`, `publisher`, `DOI`. Der zurückgegebene `title`/`author` **muss** zur Zitation passen —
 sonst halluzinierter DOI → 🔴 IV. (Fallback, falls ein Server CSL nicht liefert: `Accept: application/json`.)
+
+> **⚠️ Header-lose Fetch-Tools:** Kann das Fetch-Tool der Umgebung **keine** eigenen Request-Header
+> setzen (viele Agent-Umgebungen), leitet doi.org ohne Accept-Header auf die Verlagsseite weiter —
+> bei JS-Verlagen kommt ein **leerer Body** zurück (live verifiziert). Dann **nicht** doi.org
+> verwenden, sondern den `filter=doi:`-Lookup oben (deckt denselben Verifikationszweck ab; DOIs
+> außerhalb Crossrefs — z. B. DataCite — über OpenAlex-DOI-Lookup prüfen).
 
 **⤵ Fallback bei Problem:** Fehlt einem `select=`-Treffer ein Vergleichsfeld oder ist der Match unsicher,
 **dieselbe Quelle ohne `select=` erneut abrufen** (volles Objekt). Nur für die betroffene Quelle.
@@ -266,9 +323,13 @@ Umlaut-Problem (UTF-8-Umlaute funktionieren in Crossref-Queries grundsätzlich).
 **Daher kein pauschales ASCII:** Eine ASCII-Transliteration (`ä→a`) als Standard **senkt die
 Trefferquote** (z. B. `Agilitat` findet das Buch nicht, `Agilität` schon).
 
-**Retry-Protokoll bei leerem Body:**
+**Retry-Protokoll bei leerem Body (nie wortgleich wiederholen — Cache!):**
 
-1. Original-Query (UTF-8, percent-encoded) **einmal unverändert** wiederholen.
+1. **Einmal mit VARIIERTER Query** wiederholen (UTF-8 beibehalten): vollständigerer Titel inkl.
+   Stoppwörter, zweiter Autor in `query.author`, oder andere Kerntitel-Keyword-Mischung. Die
+   identische URL erneut zu senden ist wertlos — gecachte leere Bodies kommen identisch zurück,
+   und leere Bodies sind oft query-spezifisch reproduzierbar (mutmaßlich langsame Suchen mit sehr
+   häufigen Wörtern); eine variierte Query auf dasselbe Werk trifft dann sofort.
 2. Bleibt der Body leer: **einmal** mit ASCII-Transliteration (`ä→a`, `ö→o`, `ü→u`, `ß→ss`) wiederholen —
    als Diagnose-/Notbehelf, nicht als Standard.
 3. Liefert auch das nichts Wohlgeformtes: technischer Fehlschlag → nächste Datenbank der Kaskade
@@ -282,9 +343,10 @@ Trefferquote** (z. B. `Agilitat` findet das Buch nicht, `Agilität` schon).
   Kapitel-Enumeration von Büchern verwenden. Stattdessen: Kapitel direkt per
   `query.bibliographic=KAPITELTITEL&query.author=AUTOR` suchen (DOI-Suffixe wie `…-45` zeigen Kapitel an).
 - **Transform-Endpoint `api.crossref.org/works/DOI/transform/...`:** Liefert über `web_fetch` oft
-  Binärdaten (Content-Type-Verhandlung scheitert). Stattdessen **immer** Content-Negotiation über
-  `doi.org` mit `Accept: application/vnd.citationstyles.csl+json` (siehe oben); Fallback
-  `Accept: application/json`.
+  Binärdaten (Content-Type-Verhandlung scheitert). Stattdessen den `filter=doi:`-Lookup (oben) bzw. —
+  nur mit Header-Unterstützung — Content-Negotiation über `doi.org`.
+- **Singleton-Route mit `select=` (`/works/10.xxxx/xxxx?select=…`):** liefert einen leeren Body
+  (live verifiziert) — `select=` gehört nur auf die Listen-Route `/works?…` (siehe DOI-Lookup oben).
 
 **Rate-Limits:** Großzügig im Polite Pool (`mailto=` ergänzen). Kein Key erforderlich.
 
@@ -395,6 +457,10 @@ da der Nutzer dort zwar manuell hinkommt, der Skill den Link aber nie verifizier
 **Zweck:** Gut für englischsprachige akademische Paper, besonders interdisziplinäre und neuere Literatur.
 Als Sekundärcheck nützlich.
 
+> **⚠️ Keyless in geteilten Agent-Umgebungen unbrauchbar (leerer Body, live verifiziert).** Ohne
+> `--s2-key` Semantic Scholar **gar nicht** abfragen — der Fehlversuch kostet nur Calls. Mit Key
+> (Header `x-api-key:`) normal nutzbar.
+
 **Suche:**
 
 ```
@@ -407,8 +473,9 @@ GET https://api.semanticscholar.org/graph/v1/paper/search?query=TITLE_KEYWORDS+A
 GET https://api.semanticscholar.org/graph/v1/paper/DOI:10.xxxx/xxxx?fields=title,authors,year,externalIds,venue
 ```
 
-**Rate-Limits:** 100 Requests pro 5 Minuten. Kein Key erforderlich. Bei HTTP 429: 10 Sekunden warten,
-einmal erneut. (Mit `--s2-key` als Header `x-api-key:` wird das Limit angehoben.)
+**Rate-Limits:** 100 Requests pro 5 Minuten. Bei HTTP 429: 10 Sekunden warten,
+einmal erneut. (Mit `--s2-key` als Header `x-api-key:` wird das Limit angehoben; ohne Key in
+Agent-Umgebungen nicht nutzbar, siehe oben.)
 
 **Aufbau der kanonischen URL:**
 
@@ -426,22 +493,29 @@ einmal erneut. (Mit `--s2-key` als Header `x-api-key:` wird das Limit angehoben.
 **Zweck:** Die maßgebliche Quelle für deutschsprachige Monografien, Sammelbände und Dissertationen.
 Kostenlos, keine Registrierung nötig.
 
+### ⭐ Standardabfragen — IMMER `recordSchema=oai_dc` (analog K10plus DC)
+
+Das schlanke `oai_dc` liefert alle verifikationsrelevanten Felder (`dc:title`, `dc:creator`,
+`dc:publisher`, `dc:date`, `dc:identifier` mit **ISBN + IDN**) in < 20 Zeilen je Treffer — live
+verifiziert. Das verbose `MARC21-xml` **nur als Eskalation** (Sparse-then-Full), wenn ein Feld
+gebraucht wird, das DC nicht enthält.
+
 **Titel + Autor suchen:**
 
 ```
-GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=tit%3DTITLE_KEYWORD%20and%20per%3DAUTHOR_LASTNAME&recordSchema=MARC21-xml&maximumRecords=3
+GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=tit%3DTITLE_KEYWORD%20and%20per%3DAUTHOR_LASTNAME&recordSchema=oai_dc&maximumRecords=3
 ```
 
 **Nur nach Titel suchen:**
 
 ```
-GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=tit%3DTITLE_KEYWORD&recordSchema=MARC21-xml&maximumRecords=3
+GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=tit%3DTITLE_KEYWORD&recordSchema=oai_dc&maximumRecords=3
 ```
 
 **Nach ISBN suchen:**
 
 ```
-GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn%3DISBN&recordSchema=MARC21-xml&maximumRecords=3
+GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=isbn%3DISBN&recordSchema=oai_dc&maximumRecords=2
 ```
 
 **Titel + Autor + Jahr suchen (Jahresindex `jhr`):**
@@ -460,9 +534,8 @@ GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=t
 > einmal ohne `jhr` wiederholen und im Ergebnis-Set manuell nach Jahr filtern (Auflagenjahr kann
 > abweichen).
 
-> **Schema-Hinweis:** Wie K10plus liefert die DNB mit `recordSchema=oai_dc` eine schlanke Antwort
-> (`dc:title`, `dc:creator`, `dc:date`, `dc:publisher`, `dc:identifier` mit ISBN + IDN) in < 20
-> Zeilen; das verbose `MARC21-xml` nur, wenn ein Feld gebraucht wird, das DC nicht enthält.
+> **Schema-Hinweis:** `oai_dc` ist der Standard (siehe oben). Die IDN steht im DC-Schema in
+> `dc:identifier` mit `xsi:type="dnb:IDN"`.
 
 **URL-Encoding für deutsche Sonderzeichen:**
 | Zeichen | Encoded |
@@ -477,7 +550,7 @@ GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=t
 | Leerzeichen | `%20` |
 | = | `%3D` |
 
-**Antwort:** XML (MARC21-Format). Diese Felder parsen:
+**Antwort (nur bei MARC21-xml-Eskalation):** Diese Felder parsen:
 
 - `<controlfield tag="001">` → **IDN** (der persistente Identifikator, z. B. `993634095`)
 - `<datafield tag="245">` → Titel
@@ -490,7 +563,7 @@ GET https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve&query=t
 
 **Aufbau der kanonischen URL:**
 
-- Die IDN aus `<controlfield tag="001">` extrahieren.
+- Die IDN aus `dc:identifier` (`xsi:type="dnb:IDN"`, oai_dc) bzw. `<controlfield tag="001">` (MARC) extrahieren.
 - Kanonische URL: `https://d-nb.info/[IDN]`.
 - Beispiel: `https://d-nb.info/993634095`.
 - Link-Format: `[DNB 993634095](https://d-nb.info/993634095)`.
@@ -580,9 +653,16 @@ GET https://sru.k10plus.de/opac-de-627?version=1.1&operation=searchRetrieve&quer
 
 ## lobid (hbz-Verbundkatalog)
 
-**Zweck:** Katalog des hbz (NRW-Hochschulbibliotheken). Sehr entwicklerfreundliche JSON-LD-API,
-schlüsselfrei. Stark für deutschsprachige Bücher; auch nützlich zur **Autoren-Disambiguierung via GND**.
+**Zweck:** Katalog des hbz (NRW-Hochschulbibliotheken). JSON-LD-API, schlüsselfrei. Stark für
+deutschsprachige Bücher; auch nützlich zur **Autoren-Disambiguierung via GND**.
 Gute Sekundärquelle für deutsche Bücher neben K10plus.
+
+> **⚠️ In geteilten Agent-Umgebungen typischerweise nicht erreichbar:** Die lobid-Daten-API liefert
+> dort für **jede** Abfrage einen leeren Body (kein Block, sondern eine Transport-/Encoding-
+> Inkompatibilität; vom eigenen Browser funktioniert dieselbe URL). **Erster lobid-Call = Canary:**
+> scheitert er, lobid sitzungsweit überspringen — der leere Body ist ein **technischer Fehlschlag**,
+> nie ein 0-Ergebnis, und K10plus deckt denselben Buchraum mit höherer Trefferquote ab. Der
+> lobid-Weblink bleibt als manueller Prüflink nutzbar.
 
 **Titel + Autor suchen (Lucene-Query-Syntax):**
 
@@ -616,23 +696,30 @@ GET https://lobid.org/resources/search?q=isbn%3AISBN&format=json&size=3
 
 ## Open Library
 
-**Zweck:** Buchkatalog des Internet Archive. Stark für **internationale / englischsprachige Bücher**
-und ISBN-Lookups. Kostenlos, großzügige JSON-API. Sekundärcheck, wenn K10plus/DNB ein nicht-deutsches Buch verfehlen.
+**Zweck:** Buchkatalog des Internet Archive. Stark für **ISBN-Lookups** internationaler /
+englischsprachiger Bücher. Kostenlos. Sekundärcheck, wenn K10plus/DNB ein nicht-deutsches Buch verfehlen.
 
-**Titel + Autor suchen:**
+> **⚠️ Nur der ISBN-Lookup ist in geteilten Agent-Umgebungen zuverlässig.** Die Suche
+> `search.json` liefert dort reproduzierbar einen leeren Body (live verifiziert, mehrere
+> Query-Varianten); `/isbn/{ISBN}.json` funktioniert (Redirect auf `/books/…` mit validem JSON).
+> **Regel:** Open Library nur mit ISBN ansteuern; Titel/Autor-Suchen internationaler Bücher laufen
+> über K10plus (DC) — es enthält auch fremdsprachige Bestände. Erster `search.json`-Call = Canary.
 
-```
-GET https://openlibrary.org/search.json?title=TITLE_KEYWORDS&author=AUTHOR_LASTNAME&limit=3&fields=title,author_name,first_publish_year,key,isbn,publisher
-```
-
-**Nach ISBN suchen:**
+**Nach ISBN suchen (⭐ Standard):**
 
 ```
 GET https://openlibrary.org/isbn/ISBN.json
 ```
 
-**Antwort:** JSON. `docs[]` jeweils mit `title`, `author_name[]`, `first_publish_year`, `key`
-(z. B. `/works/OL12345W`), `isbn[]`, `publisher[]`.
+**Titel + Autor suchen (nur nach bestandenem Canary):**
+
+```
+GET https://openlibrary.org/search.json?title=TITLE_KEYWORDS&author=AUTHOR_LASTNAME&limit=3&fields=title,author_name,first_publish_year,key,isbn,publisher
+```
+
+**Antwort:** JSON. Suche: `docs[]` jeweils mit `title`, `author_name[]`, `first_publish_year`, `key`
+(z. B. `/works/OL12345W`), `isbn[]`, `publisher[]`. ISBN-Lookup: Edition-Objekt mit `title`,
+`publishers[]`, `publish_date`, `key` (z. B. `/books/OL12345M`), `works[].key`.
 
 **Rate-Limits:** Großzügig, kein Key. Bei Fehler: 2 Sekunden warten, einmal erneut.
 
@@ -647,6 +734,12 @@ GET https://openlibrary.org/isbn/ISBN.json
 
 **Zweck:** Preprints in Physik, Informatik, Mathematik, Statistik, quantitativer Biologie
 **und Wirtschaft** (`econ.*`). Für STEM-Kaskaden und jede Quelle, die nach Preprint aussieht.
+
+> **⚠️ In geteilten Agent-Umgebungen typischerweise nicht erreichbar** (leerer Body, live über
+> http **und** https verifiziert). Erster arXiv-Call = Canary; scheitert er, arXiv sitzungsweit
+> überspringen. **Ausweichweg:** arXiv-Preprints haben durchgängig registrierte DOIs
+> (`10.48550/arXiv.<ID>`) — über Crossref `filter=doi:` bzw. OpenAlex auflösen; auch die
+> Titel/Autor-Suche nach Preprints deckt OpenAlex/Crossref ab.
 
 **Titel + Autor suchen:**
 
@@ -757,11 +850,12 @@ für K10plus/DNB/Crossref/OpenAlex.
 ### BASE-Canary (Step 0 / vor erstem BASE-Call)
 
 ```
-GET https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi?func=PerformSearch&query=test&hits=1&format=json&apikey=USER_KEY
+GET https://api.base-search.net/cgi-bin/BaseHttpSearchInterface.fcgi?func=PerformSearch&query=canary-JJJJMMTT-hhmm&hits=1&format=json&apikey=USER_KEY
 ```
 
-Wohlgeformtes JSON mit `response.numFound` > 0 → BASE aktiv. Leerer Body / `<error>` → BASE für die
-Sitzung deaktivieren.
+Sitzungseindeutiges Suchwort (Datum/Uhrzeit) statt eines konstanten Testworts — gecachte Antworten
+könnten sonst einen Block verdecken. Wohlgeformtes JSON mit `response`-Objekt (`numFound` darf 0
+sein) → BASE aktiv. Leerer Body / `<error>` → BASE für die Sitzung deaktivieren.
 
 ### Suche (PerformSearch, JSON)
 
@@ -851,6 +945,11 @@ oder alle erreichbaren APIs technisch ausgefallen sind. Dann mit Disziplin:
 **Zweck:** Spezialisiert auf Wirtschafts- und Managementliteratur. Starke Abdeckung deutschsprachiger
 wirtschaftswissenschaftlicher Publikationen und Working Paper.
 
+> **⚠️ In geteilten Agent-Umgebungen typischerweise nicht erreichbar** (leerer Body, live
+> verifiziert). Erster EconBiz-Call = Canary; scheitert er, sitzungsweit überspringen und die
+> Wirtschafts-Kaskade über OpenAlex/Crossref/K10plus fahren. Als manueller Prüflink:
+> `https://www.econbiz.de/Search/Results?lookfor=QUERY`.
+
 **Suche:**
 
 ```
@@ -910,13 +1009,13 @@ sozialwissenschaftliche Artikel nutzen, die OpenAlex nicht indexiert, besonders 
 | ------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------- |
 | OpenAlex                  | Keyless ~$0,01/Tag (klein) · mit Key $1/Tag · ~10/sec | Keyless-Limit kann in langen Listen erschöpfen → leerer Body/429; Key behebt das | 3 Sekunden (429: Tageslimit, ggf. Crossref)       |
 | Crossref                  | Nicht dokumentiert (Polite Pool)                      | Großzügig                                                                        | 2 Sekunden                                        |
-| Semantic Scholar          | 100 / 5 min                                           | Strikt durchgesetzt                                                              | 10 Sekunden                                       |
+| Semantic Scholar          | 100 / 5 min                                           | Strikt; keyless in Agent-Umgebungen leerer Body → nur mit `--s2-key`            | 10 Sekunden                                       |
 | DNB SRU                   | **Nicht dokumentiert**                                | Throttelt nach ~30–50 schnellen Calls; temporäres IP-Blocking                    | **3 Sekunden Mindestabstand zwischen Calls**      |
 | K10plus SRU               | Nicht dokumentiert                                    | Robust, selten Throttle                                                          | 2 Sekunden                                        |
-| Open Library              | Großzügig                                             | Robust                                                                           | 2 Sekunden                                        |
-| arXiv                     | **Mind. 3 Sek. zwischen Calls**                       | Strikt                                                                           | 3 Sekunden                                        |
+| Open Library              | Großzügig                                             | `/isbn/` robust; `search.json` in Agent-Umgebungen leerer Body (Canary)         | 2 Sekunden                                        |
+| arXiv                     | **Mind. 3 Sek. zwischen Calls**                       | In Agent-Umgebungen oft leerer Body (Canary; DOI-Weg via Crossref)              | 3 Sekunden                                        |
 | Library of Congress SRU   | Nicht dokumentiert                                    | Empfindlich; sparsam abfragen                                                    | 3 Sekunden                                        |
-| ZBW EconBiz               | Nicht dokumentiert                                    | Selten Throttle                                                                  | 2 Sekunden                                        |
+| ZBW EconBiz               | Nicht dokumentiert                                    | In Agent-Umgebungen oft leerer Body (Canary)                                    | 2 Sekunden                                        |
 | ZDB SRU (services.dnb.de) | Nicht dokumentiert                                    | Wie DNB SRU behandeln (gleiche Infrastruktur)                                    | 3 Sekunden Mindestabstand                         |
 | GESIS                     | Via Websuche                                          | Hängt von Suchmaschine ab                                                        | —                                                 |
 | BASE (nur mit Key)        | **1 qps (hart!)**                                     | Key-Entzug bei Verstoß; in Agent-Umgebungen oft UA/IP-geblockt (leerer Body)     | **ein Aufruf/Schritt, strikt seriell, nie parallel** (1,5 s = Begründung) |

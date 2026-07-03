@@ -26,7 +26,8 @@ throttle-anfälligen rücken nach hinten:
 - **DNB** ist MARCXML-verbose **und** throttelt aktiv → rückt **hinter** die günstigen JSON-Kataloge
   (lobid, OpenAlex) und dient nur als **später Fallback**, obwohl die Abdeckung hoch ist.
 - **Semantic Scholar** (striktes Limit 100/5 min) bleibt nach OpenAlex/Crossref.
-- **DOI vorhanden?** Den DOI immer zuerst direkt auflösen (billigste Bestätigung), vor jeder Kaskade.
+- **DOI vorhanden?** Den DOI immer zuerst direkt auflösen (billigste Bestätigung), vor jeder Kaskade —
+  in header-losen Umgebungen über Crossref `filter=doi:` (auch als Batch), siehe api-endpoints.md → Crossref.
 
 ---
 
@@ -75,17 +76,21 @@ aussieht). Den Nutzer zu diesen Abweichungen pro Quelle nicht erneut fragen; sti
 
 | Publikationstyp | BibTeX-Typ | Kaskade (Prioritätsreihenfolge) |
 |---|---|---|
-| Zeitschriftenartikel | `@article` | OpenAlex → Crossref → (Semantic Scholar) → Fach-DB |
-| Deutsche Monografie / Sammelband | `@book` | K10plus (DC) → lobid → OpenAlex → DNB → (Open Library) |
-| Nicht-deutsches / internationales Buch | `@book` | Open Library → K10plus (DC) → OpenAlex → (Library of Congress) |
-| Buchkapitel | `@incollection` | Host-Volume über K10plus (DC) → lobid → DNB (Sammelbände-Regel anwenden) |
+| Zeitschriftenartikel | `@article` | OpenAlex → Crossref → (Semantic Scholar, nur mit Key) → Fach-DB |
+| Deutsche Monografie / Sammelband | `@book` | K10plus (DC) → OpenAlex → lobid* → DNB → (Open Library, nur ISBN) |
+| Nicht-deutsches / internationales Buch | `@book` | K10plus (DC) → Open Library (nur ISBN) → OpenAlex → (Library of Congress) |
+| Buchkapitel | `@incollection` | Host-Volume über K10plus (DC) → lobid* → DNB (Sammelbände-Regel anwenden) |
 | Konferenzbeitrag | `@inproceedings` | OpenAlex → Crossref → K10plus |
-| Preprint | `@misc` / `@article` | arXiv → OpenAlex → Crossref |
+| Preprint | `@misc` / `@article` | arXiv* → OpenAlex → Crossref (arXiv-DOIs `10.48550/…` direkt via Crossref/OpenAlex) |
 | Report / Working Paper **mit DOI/ISBN/Handle** | `@techreport` | DOI-Resolve / Repositorium (econstor, SSRN) → OpenAlex → K10plus → lobid → [BASE, falls Key] |
 | Hochschulschrift / Dissertation / Preprint / OA-Repositoriumsinhalt | `@phdthesis`/`@misc` | OpenAlex → [BASE, falls Key] → K10plus/DNB (Diss.) → arXiv (Preprint) |
 | Graue Literatur **mit URL/Herausgeber** (Webseite, Behörden-/Regierungs-/Parlamentsdokument, Pressemitteilung, Nachricht, Koalitionsvertrag) | `@misc` / `@online` | **Graue-Literatur-Prüfung** (SKILL.md Step 2 / category-rules.md): URL auflösen + Herausgeber/Titel/Datum abgleichen → I–IV. **Keine** Katalog-Kaskade, **kein** 🎓/⚪ als Default. |
 
 `( )` = nur, wenn die höher priorisierten Datenbanken verfehlen oder unsicher sind.
+`*` = **Canary-pflichtig:** Endpunkt ist in geteilten Agent-Umgebungen typischerweise nicht erreichbar
+(leerer Body — lobid, arXiv, Open Library `search.json`, EconBiz, Semantic Scholar keyless; siehe
+api-endpoints.md → „Bekannte Umgebungsausfälle"). Erster Call = Canary; scheitert er, den Endpunkt
+sitzungsweit überspringen — die Kaskade läuft mit den übrigen Datenbanken weiter.
 
 **BASE (nur mit `--base-key`):** ergänzt die Grey-Literature-/Hochschulschriften-/OA-Zweige, **nicht**
 die Monografie- oder Artikel-Kaskaden (BASE ist OA-/Repositorien-Aggregator, kein Buch-/Verlagskatalog —
@@ -120,23 +125,23 @@ Freitextsuche bei kurzen deutschen Titeln versagt; danach Crossref über den **d
 Diese ergänzen oder repriorisieren Datenbanken über Teil B hinaus. Frei editierbar.
 
 ### sozialwissenschaften (Soziologie, Politik, Erziehung)
-Primär: **K10plus, OpenAlex, GESIS, DNB**  ·  Artikel zusätzlich: **Crossref**  ·  Ergänzend: lobid
+Primär: **K10plus, OpenAlex, GESIS, DNB**  ·  Artikel zusätzlich: **Crossref**  ·  Ergänzend: lobid*
 
 ### wirtschaft (VWL, BWL, Management)
-Primär: **ZBW EconBiz, OpenAlex, Crossref**  ·  Bücher: **K10plus (DC), lobid** → Fallback DNB  ·  Ergänzend: arXiv (`econ.*`), DOAJ
+Primär: **OpenAlex, Crossref, ZBW EconBiz***  ·  Bücher: **K10plus (DC), lobid*** → Fallback DNB  ·  Ergänzend: arXiv* (`econ.*`), DOAJ
 
 ### recht
-Primär: **K10plus (DC), lobid, OpenAlex**  ·  Fallback: DNB
+Primär: **K10plus (DC), OpenAlex, lobid***  ·  Fallback: DNB
 (Hinweis: Viel juristische Literatur ist von offenen APIs schlecht abgedeckt — mit mehr ⚪ ? und vorbereiteten Links rechnen.)
 
 ### stem (Physik, Informatik, Mathematik, Technik, Naturwiss.)
-Primär: **OpenAlex, Crossref, arXiv**  ·  Ergänzend: Semantic Scholar, DataCite
+Primär: **OpenAlex, Crossref, arXiv***  ·  Ergänzend: Semantic Scholar (nur mit Key), DataCite
 
 ### medizin / life sciences
 Primär: **OpenAlex, Crossref**  ·  Ergänzend: Europe PMC / PubMed (noch nicht als Live-API implementiert — vorbereiteter Link)
 
 ### geistes (Geschichte, Philologie, Philosophie, …)
-Primär: **K10plus (DC), OpenAlex, lobid**  ·  Bücher: **Open Library, Library of Congress**  ·  Fallback: DNB
+Primär: **K10plus (DC), OpenAlex, lobid***  ·  Bücher: **Open Library (nur ISBN), Library of Congress**  ·  Fallback: DNB
 
 ### allgemein / unsicher
 Rein nach Publikationstyp routen (Teil B). Standard-Buch-Kaskade: **K10plus → DNB → OpenAlex → Open Library**.
@@ -166,3 +171,5 @@ API und als allgemeine manuelle Prüfhilfe:
   als manueller Suchlink. **Live-Abfrage:** BASE wird mit `--base-key` automatisch abgefragt (key-gated,
   Canary, hartes 1,5-s-Limit; siehe api-endpoints.md → BASE). Ohne Key oder bei Block in der Umgebung
   bleibt nur dieser Web-Link.
+- **EconBiz:** `https://www.econbiz.de/Search/Results?lookfor=` + gleiche Query — als manueller
+  Prüflink, wenn die EconBiz-API in der Umgebung nicht erreichbar ist (Canary gescheitert).

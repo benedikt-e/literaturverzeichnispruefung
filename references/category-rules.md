@@ -128,14 +128,16 @@ Lässt sich nicht einmal der Host-Band verifizieren → zur vollen IV-Prüfung �
 
 Enthält das Original einen DOI, ist das der zuverlässigste Verifikationspfad — und das zuverlässigste Halluzinationssignal.
 
-**Einen zitierten DOI immer auflösen:**
+**Einen zitierten DOI immer auflösen** (Standard, funktioniert ohne Request-Header und ohne Key):
 
 ```
-GET https://doi.org/[DOI]
-Headers: Accept: application/vnd.citationstyles.csl+json
+GET https://api.crossref.org/works?filter=doi:[DOI]&select=DOI,title,author,published,container-title,publisher,type&rows=1
 ```
 
-(Schlankes CSL-JSON-Objekt; Fallback `Accept: application/json`, falls ein Server CSL nicht liefert.)
+Nur wenn das Fetch-Tool Request-Header setzen kann, alternativ `GET https://doi.org/[DOI]` mit
+`Accept: application/vnd.citationstyles.csl+json` (Fallback `Accept: application/json`). Ein bei
+Crossref unbekannter DOI (kein Treffer im `filter=doi:`-Ergebnis) wird vor dem Urteil „löst nicht
+auf" über OpenAlex geprüft (DataCite-DOIs). Details: api-endpoints.md → Crossref.
 
 **Den zurückgegebenen Titel und die Autoren mit dem Originalzitat vergleichen.**
 
