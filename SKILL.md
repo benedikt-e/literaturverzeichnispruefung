@@ -4,7 +4,7 @@ description: Verify academic references and bibliographies for citation errors a
 license: GPL-3.0-or-later
 metadata:
   author: Benedikt Engelmeier
-  version: "0.5.1"
+  version: "0.5.3"
   hermes:
     tags: [research, citations, bibliography, hallucination-detection, academic, verification, literatur, literaturverzeichnis]
     category: research
@@ -22,15 +22,21 @@ erfordert eine Live-Abfrage mit anklickbarer Ergebnis-URL. Ohne diese URL gilt d
 
 ## ⭐ Verifikations-Kern (immer zuerst lesen, gilt für JEDE Quelle)
 
-1. **Pflichtreihenfolge je Quelle:** DOI vorhanden → direkt auflösen. Sonst nach Typ:
-   Artikel → **OpenAlex → Crossref** (beide mit `select=`+`rows=2`); ohne OpenAlex-Key bzw. nach
-   gescheitertem Canary **Crossref-primär**. Deutsches Buch → **K10plus (DC)** → lobid → OpenAlex → DNB.
+1. **Pflichtreihenfolge je Quelle:** DOI vorhanden → direkt auflösen (Standard: Crossref
+   `works?filter=doi:…&select=…`, siehe api-endpoints.md). Sonst nach Typ:
+   Artikel → **OpenAlex → Crossref** (beide mit `select=` und kleiner Trefferzahl, `rows=2–3`); ohne
+   OpenAlex-Key bzw. nach gescheitertem Canary **Crossref-primär**. Deutsches Buch → **K10plus (DC)**
+   → OpenAlex → DNB (lobid nur nach bestandenem Canary, siehe Routing).
    Kaskade **vollständig** durchlaufen; ein einzelner Fehlschlag einer DB ist kein Endergebnis.
 2. **Vor jedem Nicht-Treffer-Urteil** (🔴 IV **oder** „nicht prüfbar"): die **Gegenprobe** ausführen —
-   freie K10plus-Schlüsselwortsuche `query=KERNTITEL+AUTOR` (Bücher) bzw. Crossref
+   freie K10plus-Schlüsselwortsuche `query=pica.all%3DKERNTITEL_KEYWORDS+AUTOR_NACHNAME` (Bücher;
+   dieses eine Muster, siehe api-endpoints.md → K10plus) bzw. Crossref
    `query.bibliographic=…&query.author=…&select=…` (Artikel). Bei **mehreren Autoren/Herausgebern**
-   auch einen **zweiten Namen** als Suchterm probieren (`pica.all=ZWEITER_NAME+KERNTITEL`). Leerer
-   Body → Retry-Protokoll, dann nächste DB — **nicht** vorzeitig aufgeben.
+   auch einen **zweiten Namen** als Suchterm probieren (`pica.all%3DZWEITER_NAME+KERNTITEL`).
+   **Gültigkeit:** Eine Gegenprobe zählt nur als ausgeführt, wenn die Query Autor-Nachname UND
+   Kerntitel-Keywords enthält; liefert sie eine dreistellige oder höhere Trefferzahl, war sie zu
+   unspezifisch und gilt als NICHT ausgeführt (enger neu formulieren). Leerer
+   Body → Retry mit **variierter** Query (siehe Step 3), dann nächste DB — **nicht** vorzeitig aufgeben.
 3. **Festlegungspflicht:** Jede **gewöhnliche** Quelle (Buch, Artikel, Sammelbandkapitel) endet
    zwingend in **🟢 I / 🟡 II / 🟠 III / 🔴 IV**. Die Ausweich-Status sind eng begrenzt:
    
@@ -345,11 +351,11 @@ Welle 1 zusammenfassen — nur **einmal** prüfen, das Ergebnis auf alle Vorkomm
 
 Schnellorientierung (volles Detail in der Routing-Datei):
 
-- **Zeitschriftenartikel:** OpenAlex → Crossref → (Semantic Scholar) → Fach-DB (EconBiz/GESIS)
-- **Deutsche Bücher / Sammelbände:** K10plus (DC) → lobid → OpenAlex → DNB → (Open Library)
-- **Internationale Bücher:** Open Library → K10plus → OpenAlex → (Library of Congress)
-- **Buchkapitel:** Host-Volume über K10plus → lobid → DNB (zuerst Sitzungs-Cache prüfen; Sammelbände-Regel anwenden)
-- **Preprints / STEM:** arXiv → OpenAlex → Crossref
+- **Zeitschriftenartikel:** OpenAlex → Crossref → (Semantic Scholar, nur mit Key) → Fach-DB (EconBiz/GESIS)
+- **Deutsche Bücher / Sammelbände:** K10plus (DC) → OpenAlex → lobid (Canary) → DNB → (Open Library, nur ISBN)
+- **Internationale Bücher:** K10plus → Open Library (nur ISBN) → OpenAlex → (Library of Congress)
+- **Buchkapitel:** Host-Volume über K10plus → lobid (Canary) → DNB (zuerst Sitzungs-Cache prüfen; Sammelbände-Regel anwenden)
+- **Preprints / STEM:** arXiv (Canary) → OpenAlex → Crossref
 - **Deutsche Sozialwissenschaften:** **GESIS** per Websuche ergänzen: `site:search.gesis.org TITEL_KEYWORDS AUTOR_NACHNAME`
 - **Graue Literatur (mit URL/Herausgeber):** Graue-Literatur-Prüfung (siehe unten) — **nicht** der Buchkaskade zuführen, **nicht** als ⚪/🎓 abtun.
 
@@ -443,8 +449,17 @@ Dies ist die wichtigste Regel für verlässliche Ergebnisse (siehe api-endpoints
   `URL exceeds maximum length` / 4xx / 5xx / Timeout / JS-Shell) von einem **validen 0-Ergebnis**
   (wohlgeformte Antwort, die echte null Treffer meldet).
 - **Bei technischem Fehlschlag:** bei 403/Länge die URL kürzen (OpenAlex: Autor-Filter raus → in
-  `search=`, ggf. `mailto=` weg) und **einmal** erneut; sonst einmal erneut; dann **zur nächsten
+  `search=`, ggf. `mailto=` weg) und **einmal** erneut; sonst **einmal mit VARIIERTER Query** erneut
+  (siehe Retry-Regel unten); dann **zur nächsten
   Datenbank der Kaskade** weitergehen. **Nicht** klassifizieren und **nicht** still auf WebSearch ausweichen.
+- **Retry heißt variieren, niemals wortgleich wiederholen (HARTE REGEL):** Viele Agent-Umgebungen
+  cachen `web_fetch`-Antworten pro URL — die **identische** URL erneut zu senden liefert denselben
+  (auch denselben leeren) Body zurück und ist als Retry wertlos. Ein Retry MUSS die Query verändern,
+  in dieser Reihenfolge: (1) **vollständigerer Titel** inkl. Stoppwörter/Untertitel-Anfang,
+  (2) **zweiten Autor** in den Autor-Parameter aufnehmen bzw. auf ihn wechseln, (3) andere
+  Kerntitel-Keyword-Mischung. Leere Bodies treten query-spezifisch reproduzierbar auf (mutmaßlich
+  langsame Suchen mit sehr häufigen Wörtern); eine variierte Query auf dasselbe Werk trifft dann oft
+  sofort.
 - **Klassifikations-Sperre:** 🔴 IV oder ⚪ ? („nicht gefunden") nur, wenn **mindestens eine** Datenbank
   ein **valides** Ergebnis lieferte. „Technisch nicht prüfbar" gilt **nur, wenn ALLE für den Typ
   zuständigen DBs technisch fehlschlugen** — ein leerer Body **einer** DB (z. B. OpenAlex) bei sonst
@@ -460,29 +475,39 @@ Dies ist die wichtigste Regel für verlässliche Ergebnisse (siehe api-endpoints
   **nie** Richtung 🔴 IV zählen. Maßgeblich für IV bleiben die Katalog-/DOI-Quellen (K10plus, DNB,
   Crossref, OpenAlex, lobid).
 - **Gegenprobe-Pflicht vor 🔴 IV:** Bevor ein Buch oder Artikel 🔴 IV erhält, **eine** letzte
-  Kontrollabfrage senden, die gegen Feldsemantik-Fehler robust ist: bei **Büchern** K10plus **freie
-  Schlüsselwortsuche ohne Index** (`query=KERNTITEL_KEYWORDS+AUTOR_NACHNAME`); bei **Artikeln** Crossref
+  Kontrollabfrage senden, die gegen Feldsemantik-Fehler robust ist: bei **Büchern** die K10plus **freie
+  Schlüsselwortsuche** `query=pica.all%3DKERNTITEL_KEYWORDS+AUTOR_NACHNAME` (exakt dieses Muster,
+  siehe api-endpoints.md → K10plus → freie Suche); bei **Artikeln** Crossref
   `query.bibliographic=KERNTITEL&query.author=NACHNAME&select=DOI,title,author,published,container-title&rows=2`.
-  Erst wenn auch diese 0 Treffer liefert, ist 🔴 IV zulässig. Ein „nicht gefunden" bei einem breit
+  **Gültigkeitskriterium:** Die Gegenprobe muss Autor-Nachname UND Kerntitel-Keywords enthalten und
+  eine überschaubare Trefferzahl liefern; ein „0 passende von 1000+ Treffern" auf eine unspezifische
+  Query (nur ein Allerweltswort, nur ein Jahr, ohne Autor) ist KEINE ausgeführte Gegenprobe.
+  Erst wenn eine so gebaute Abfrage 0 Treffer liefert, ist 🔴 IV zulässig. Ein „nicht gefunden" bei einem breit
   rezipierten Standardwerk zeigt fast immer eine fehlgebaute oder abgebrochene Abfrage an, keine
   fehlende Quelle.
 - **Überdimensionierte Antwort = vergessenes `select=`:** Meldet eine Crossref-/OpenAlex-Antwort „zu
   groß"/viele KB und wird abgebrochen, war die Query **ohne** `select=`+`rows=2` gebaut. **Kein** Grund
   für „nicht prüfbar" — die **gleiche** Quelle mit `select=`+`rows=2` erneut abfragen.
-- **Leerer Crossref-Body:** Retry-Protokoll (1× unverändert, 1× ASCII) ausführen, dann OpenAlex/nächste
+- **Leerer Crossref-Body:** Retry-Protokoll ausführen — 1× mit **variierter** Query (vollerer Titel /
+  Zweitautor, nie wortgleich), notfalls 1× ASCII —, dann OpenAlex/nächste
   DB — **nicht** vorzeitig „nicht prüfbar" vergeben.
 - **Reprint/Container-Treffer = Existenznachweis:** Liefert die DB statt der Originalausgabe eine
   Nachdruck-/Sammelband-Version mit passendem Titel + Autor(en), gilt die Quelle als **existent**
   (🟢/🟡) — Originalvenue/-jahr ggf. per gezielter Query/DOI nachziehen, aber nicht als „nicht gefunden" werten.
 - **Fällt OpenAlex aus, aktiv Crossref ansteuern** (kurze URLs) — nicht überspringen.
 
-**Ist im Original ein DOI vorhanden:** Immer direkt auflösen — `GET https://doi.org/[DOI]` mit
-`Accept: application/vnd.citationstyles.csl+json` (kompaktes CSL-Objekt; Fallback `application/json`) —
-und prüfen, ob zurückgegebener Titel und Autoren passen. Ein DOI, der zu einem anderen Werk auflöst,
-ist ein starkes Halluzinationssignal.
+**Ist im Original ein DOI vorhanden:** Immer direkt auflösen — Standard ist der Crossref-Lookup
+`GET https://api.crossref.org/works?filter=doi:[DOI]&select=…&rows=1` (funktioniert ohne
+Request-Header und ohne Key; Muster in api-endpoints.md). Nur wenn das Fetch-Tool der Umgebung
+Request-Header setzen kann, alternativ `GET https://doi.org/[DOI]` mit
+`Accept: application/vnd.citationstyles.csl+json`. Prüfen, ob zurückgegebener Titel und Autoren
+passen. Ein DOI, der zu einem anderen Werk auflöst, ist ein starkes Halluzinationssignal; ein bei
+Crossref unbekannter DOI wird über OpenAlex nachgeprüft (DataCite-DOIs), bevor er als nicht
+auflösbar gilt.
 
 **Schlank abfragen — immer das leichteste Fieldset (siehe api-endpoints.md, Effizienz-Grundregeln):**
-K10plus → `recordSchema=dc`, OpenAlex/Crossref → `select=`, DOI-Resolve → CSL-JSON, Ergebnislisten auf
+K10plus/DNB → `recordSchema=dc`/`oai_dc`, OpenAlex/Crossref → `select=`, DOI-Resolve → Crossref
+`filter=doi:`+`select=` (bzw. CSL-JSON, nur mit Header-Unterstützung), Ergebnislisten auf
 2–3 begrenzt. **Sparse-then-Full-Fallback:** Lässt ein schlank abgefragter Treffer ein Vergleichsfeld
 vermissen, ist er mehrdeutig oder scheitert das Parsing, **genau diese eine Quelle** noch einmal voll
 abrufen (ohne `select=` / mit MARCXML). Nie pauschal auf das fette Objekt zurückfallen.
@@ -501,25 +526,36 @@ können — sofern die Umgebung es zulässt — **gleichzeitig** abgefragt werde
 in **einem** Schritt:
 
 0. **Sitzungs-Canary (allererster Call, vor Welle 0):** Einen minimalen OpenAlex-Test-Call senden —
-   **mit `api_key=`, falls `--openalex-key` gesetzt** (`works?search=test&per_page=1[&api_key=…]`).
+   **mit `api_key=`, falls `--openalex-key` gesetzt** — und zwar mit einem **sitzungseindeutigen
+   Suchwort** statt eines konstanten Testworts:
+   `works?search=canary-JJJJMMTT-hhmm&per_page=1[&api_key=…]` (Datum/Uhrzeit einsetzen).
+   **Grund (HART):** Viele Agent-Umgebungen cachen `web_fetch`-Antworten pro URL; ein Canary mit
+   immer gleicher URL kann aus dem Cache „gelingen", obwohl die Datenbank aktuell nicht erreichbar
+   ist — und weist damit eine tote DB als lebendig aus. Ein einzigartiges Suchwort erzwingt einen
+   echten Live-Call (das Suchwort darf 0 Treffer liefern; entscheidend ist wohlgeformtes JSON mit
+   `meta`/`results`, nicht die Trefferzahl).
    Kommt kein wohlgeformtes JSON: Ohne Key ist das der **Normalfall in geteilten Agent-Umgebungen**
    (Keyless-Anfragen liefern leeren Body, siehe api-endpoints.md → OpenAlex). Die Key-Frage wurde bereits in **Step 0**
    gestellt — hier **nicht erneut** nachfragen: liegt kein Key vor, OpenAlex für die **gesamte Sitzung**
    deaktivieren und alle Artikel-Kaskaden Crossref-primär fahren. Das spart pro Quelle 1–2 tote Calls.
    **BASE-Canary (nur wenn `--base-key`/Step-0-Key vorliegt):** zusätzlich **einen** BASE-Test-Call
-   `func=PerformSearch&query=test&hits=1&format=json&apikey=…` senden (siehe api-endpoints.md → BASE).
+   `func=PerformSearch&query=canary-JJJJMMTT-hhmm&hits=1&format=json&apikey=…` senden (sitzungseindeutiges
+   Suchwort aus demselben Grund; siehe api-endpoints.md → BASE).
    Kommt ein leerer Body (in geteilten Agent-Umgebungen der Normalfall — UA/IP-Block), BASE für die
    **gesamte Sitzung deaktivieren**, ohne erneute Nachfrage. Dieser eine Canary zählt bereits zum
    1,5-s-BASE-Takt.
 1. **Welle 0 — Identifier-First (billigster, sicherster Treffer zuerst):** Alle Quellen **mit DOI oder
-   ISBN** direkt auflösen, bevor irgendeine Titel/Autor-Kaskade startet. DOI → CSL-JSON-Resolve; mehrere
-   DOIs lassen sich bei OpenAlex in **einem** Call bündeln (`filter=doi:a|b|c`, **max. 5 DOIs** pro Call
-   wegen URL-Limit). ISBN → K10plus/Open Library. Bestätigte Quellen fallen aus den teuren Wellen heraus.
+   ISBN** direkt auflösen, bevor irgendeine Titel/Autor-Kaskade startet. DOI → Crossref
+   `filter=doi:`-Lookup; mehrere DOIs in **einem** Call bündeln — Crossref kommagetrennt
+   (`filter=doi:A,doi:B`, ohne Key) oder OpenAlex (`filter=doi:a|b|c`, mit Key); **max. 5 DOIs** pro
+   Call wegen URL-Limit. ISBN → K10plus/Open Library (`/isbn/`). Bestätigte Quellen fallen aus den
+   teuren Wellen heraus.
 2. **Welle 1 — gruppieren:** Die **verbleibenden** Quellen (ohne Identifier) parsen und nach Typ
    sortieren (Artikel, deutsche Monografien, internationale Monografien, Buchkapitel/Sammelbände,
    FernUni/Graue Literatur).
 3. **Canary vor dem Fan-out:** Für jede **neue** Query-Form/Datenbank zuerst **EINEN** Test-Call senden
-   und prüfen, dass wohlgeformtes JSON/XML kommt. Erst dann auffächern. Scheitert der Canary technisch,
+   und prüfen, dass wohlgeformtes JSON/XML kommt (auch hier keine in dieser Sitzung schon einmal
+   gesendete URL wiederverwenden — Cache-Gefahr). Erst dann auffächern. Scheitert der Canary technisch,
    erst das Muster reparieren (URL kürzen) bzw. die DB für diese Welle überspringen — so verbrennt nicht
    eine ganze Welle an einem kaputten Muster.
 4. **Welle 2 — parallele Erstabfragen:** Pro Welle 4–6 unabhängige Queries gleichzeitig (schlankes Fieldset).
@@ -714,7 +750,8 @@ erlaubt — niemals II/III. Folge dem Entscheidungsbaum:
          · tot UND auch über Herausgeber-/Titelsuche nicht bestätigt → 🔴 IV
          NIE 🎓 FU und NICHT automatisch ⚪ für graue Literatur.
    NEIN ↓
-4. Gegenprobe AUSGEFÜHRT? (freie K10plus-Keywordsuche `pica.all=KERNTITEL+AUTOR` = 0 Treffer, Step 3)
+4. Gegenprobe GÜLTIG AUSGEFÜHRT? (freie K10plus-Suche `query=pica.all%3DKERNTITEL+AUTOR` = 0 Treffer;
+   Query enthält Autor UND Kerntitel; keine dreistellige+ Trefferzahl — Step 3)
    NEIN → Gegenprobe ZWINGEND nachholen, dann erneut ab 1. prüfen
    JA  ↓
 5. Echtes FernUni-Lernmaterial (Studienbrief/Lerneinheit, Ort/Publisher „Hagen: FernUniversität")
@@ -775,7 +812,7 @@ Auch in der Spalte „Art der Abweichungen" und im „Belege & Nachschlagen"-Blo
 
 ## Referenzdateien
 
-Bei Bedarf laden — nicht alle vorab laden:
+Bei Bedarf laden, nicht alle vorab laden:
 
 - **`references/database-routing.md`** — welche Datenbanken für welchen Publikationstyp und welches
   Fachgebiet, in Prioritätsreihenfolge; Fachgebiets-Erkennung und `--fachgebiet`-Override; FernUni-

@@ -1,5 +1,69 @@
 # Changelog — Literaturverzeichnisprüfung
 
+## [0.5.3] — 2026-07-03
+
+Robustheits-Korrekturen an Canary-, Retry- und Gegenprobe-Mechanik; alle geänderten Muster live
+gegen die Schnittstellen verifiziert.
+
+### Behoben
+
+- **Canary-Aufrufe mit sitzungseindeutigem Suchwort** (`canary-JJJJMMTT-hhmm` statt konstantem
+  Testwort): Viele Agent-Umgebungen cachen `web_fetch`-Antworten pro URL; ein konstanter Canary
+  kann aus dem Cache „gelingen" und eine aktuell nicht erreichbare Datenbank als aktiv ausweisen.
+  Gilt für OpenAlex- und BASE-Canary sowie den Canary vor dem Fan-out.
+- **Retry-Regel umgestellt — variieren statt wiederholen:** Ein wortgleicher Retry ist wegen des
+  URL-Caches wirkungslos; leere Bodies treten zudem query-spezifisch reproduzierbar auf
+  (mutmaßlich langsame Suchen mit sehr häufigen Wörtern). Retries verändern jetzt die Query in
+  fester Reihenfolge: vollständigerer Titel inkl. Stoppwörter → zweiter Autor → andere
+  Keyword-Mischung. ASCII-Transliteration bleibt nachgelagerter Notbehelf.
+
+### Geändert
+
+- **Ein einheitliches Muster für die freie K10plus-Suche:** Gegenprobe und freie Schlagwortsuche
+  verwenden überall dasselbe kopierfertige Muster `query=pica.all%3DKERNTITEL+AUTOR`
+  (Verifikations-Kern, Step 3, Entscheidungsbaum und api-endpoints.md waren zuvor uneinheitlich —
+  eine Quelle fehlgebauter Abfragen).
+- **Gültigkeitskriterium für die Gegenprobe:** Eine Gegenprobe zählt nur als ausgeführt, wenn die
+  Query Autor-Nachname UND Kerntitel-Keywords enthält und eine überschaubare Trefferzahl liefert;
+  unspezifische Abfragen mit dreistelliger oder höherer Trefferzahl gelten als nicht ausgeführt.
+
+## [0.5.2] — 2026-07-02
+
+Schnittstellen-Korrekturen für header-lose Agent-Umgebungen; alle geänderten Abfragemuster gegen
+die Live-Schnittstellen geprüft.
+
+### Behoben
+
+- **DOI-Auflösung:** Der Crossref-Einzelwerk-Lookup mit `select=` auf der Singleton-Route
+  (`/works/{DOI}?select=…`) ist defekt (leerer Body; `select` gilt nur für die Listen-Route) und
+  als bekannt-defektes Muster gekennzeichnet. Neues Standardmuster ist der Lookup über die
+  Listen-Route `works?filter=doi:…&select=…&rows=1` — sparsam und ohne Key nutzbar.
+- **doi.org-Content-Negotiation als headerabhängig gekennzeichnet:** Ohne setzbaren
+  `Accept`-Header leitet doi.org auf JS-Verlagsseiten weiter (leerer Body). Der CSL-JSON-Weg gilt
+  nur noch für Umgebungen mit Header-Unterstützung; Standard ist der `filter=doi:`-Lookup.
+
+### Geändert
+
+- **DNB-Standardmuster auf `recordSchema=oai_dc` umgestellt** (analog zur K10plus-DC-Abfrage);
+  `MARC21-xml` nur noch als Eskalationsstufe (Sparse-then-Full). Reduziert die Antwortgröße je
+  DNB-Call erheblich.
+- **Welle 0 (Identifier-First):** Batch-DOI-Auflösung ohne OpenAlex-Key jetzt über Crossref
+  (`filter=doi:A,doi:B`, kommagetrennt, max. ~5 DOIs) statt Einzelauflösung über doi.org.
+- **Kaskaden-Anpassungen:** Internationale Bücher K10plus-zuerst (Open Library nur noch für
+  ISBN-Lookups); lobid in den Buch-/Kapitel-Kaskaden Canary-pflichtig; Semantic Scholar wird ohne
+  `--s2-key` nicht mehr abgefragt; arXiv- und EconBiz-Erstcalls als Canary.
+- **Trefferzahl-Angaben vereinheitlicht** (`rows=2–3` als Rahmen; SKILL.md und api-endpoints.md
+  widersprechen sich nicht mehr).
+
+### Hinzugefügt
+
+- **Übersicht „Bekannte Umgebungsausfälle"** im Fallback-Protokoll: Endpunkte, die aus geteilten
+  Agent-Umgebungen typischerweise leere Bodies liefern (OpenAlex keyless, lobid, Semantic Scholar
+  keyless, Open Library `search.json`, arXiv, EconBiz, doi.org ohne Header), mit der Regel:
+  erster Call = Canary, bei Fehlschlag sitzungsweit überspringen, nie in parallele Wellen aufnehmen.
+- **arXiv-Ausweichweg** über registrierte Preprint-DOIs (`10.48550/arXiv.…`) via Crossref/OpenAlex.
+- **EconBiz-Weblink** als vorbereiteter manueller Prüflink.
+
 ## [0.5.1] — 2026-06-26
 
 Schnittstellen-Korrekturen nach Abgleich mit der offiziellen DNB-, ZDB- und Crossref-Dokumentation;
