@@ -1,5 +1,28 @@
 # Changelog — Literaturverzeichnisprüfung
 
+## [0.6.0] — 2026-07-09
+
+Neue Datenbank **OpenAIRE Graph API** integriert — keyless, breiter OA-/Forschungs-Aggregator
+(Crossref + DataCite + Repositorien). Motiv: OpenAlex und weitere Endpunkte blocken in geteilten
+Agent-Umgebungen (leerer Body); OpenAIRE ist dort **erreichbar** und liefert die breite
+Artikel-/OA-Abdeckung keyless nach. Alle Abfragemuster live gegen echte Test-Zitationen aus früheren
+Läufen verifiziert (Meyer/Rowan, DiMaggio/Powell, Weick, Reckwitz, Kühl u. a.).
+
+### Hinzugefügt
+
+- **OpenAIRE-Abschnitt in api-endpoints.md** mit kopierfertigen Mustern: DOI-Lookup über `pid=`,
+  Titel+Autor über `mainTitle=`+`authorFullName=`, Freitext+Autor+Jahr über
+  `search=`+`fromPublicationDate`/`toPublicationDate`; Feld-Mapping, kanonische URL
+  (`explore.openaire.eu` bzw. DOI), Canary- und Rate-Limit-Regeln.
+- **Warnung „falscher Parametername = leerer Body"**: Undokumentierte Parameter (`author=`, `doi=`,
+  `title=`) erzeugen HTTP 400, das `web_fetch` als leeren Body verschluckt. Nur dokumentierte Namen
+  verwenden — Autorfeld ist `authorFullName`, DOI-Feld ist `pid`.
+- **Routing:** OpenAIRE als breiter Artikel-Zweitcheck hinter Crossref sowie als keyless-Zweig für
+  graue Literatur/Hochschulschriften/OA (Report-, Thesis-, Sozialwissenschafts- und
+  Wirtschafts-Kaskaden); benannt als bevorzugter keyless-Ersatz, wenn der OpenAlex-Canary scheitert.
+- **Klassifikations-Vorbehalt** wie bei BASE: OpenAIRE ist kein Buch-/Verlagskatalog — ein Miss zählt
+  für Monografien nicht Richtung 🔴 IV.
+
 ## [0.5.3] — 2026-07-03
 
 Robustheits-Korrekturen an Canary-, Retry- und Gegenprobe-Mechanik; alle geänderten Muster live

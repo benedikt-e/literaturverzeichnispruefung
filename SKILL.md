@@ -1,10 +1,10 @@
 ---
 name: literaturverzeichnispruefung
-description: Verify academic references and bibliographies for citation errors and AI hallucinations using live database APIs (OpenAlex, K10plus, lobid, DNB, Crossref, Semantic Scholar, ZBW EconBiz, Open Library, arXiv, Library of Congress, GESIS). Trigger whenever a user wants to check, verify, or validate ANY bibliography, reference list, or Literaturverzeichnis — their own or someone else's (a student's thesis, a colleague's paper, an AI-generated draft). Trigger on phrasings like "prüfe mein/dieses/das Literaturverzeichnis", "kannst du dieses Quellenverzeichnis checken", "check this/these references", "verify this bibliography", "sind diese Quellen echt / halluziniert", or whenever they paste or upload a list of references for checking. Also trigger when the user suspects fabricated sources, or asks whether a specific book, paper, or article actually exists. Use for any literature verification task, even a single source.
+description: Verify academic references and bibliographies for citation errors and AI hallucinations using live database APIs (OpenAlex, OpenAIRE, K10plus, lobid, DNB, Crossref, Semantic Scholar, ZBW EconBiz, Open Library, arXiv, Library of Congress, GESIS). Trigger whenever a user wants to check, verify, or validate ANY bibliography, reference list, or Literaturverzeichnis — their own or someone else's (a student's thesis, a colleague's paper, an AI-generated draft). Trigger on phrasings like "prüfe mein/dieses/das Literaturverzeichnis", "kannst du dieses Quellenverzeichnis checken", "check this/these references", "verify this bibliography", "sind diese Quellen echt / halluziniert", or whenever they paste or upload a list of references for checking. Also trigger when the user suspects fabricated sources, or asks whether a specific book, paper, or article actually exists. Use for any literature verification task, even a single source.
 license: GPL-3.0-or-later
 metadata:
   author: Benedikt Engelmeier
-  version: "0.5.3"
+  version: "0.6.0"
   hermes:
     tags: [research, citations, bibliography, hallucination-detection, academic, verification, literatur, literaturverzeichnis]
     category: research
@@ -351,7 +351,7 @@ Welle 1 zusammenfassen — nur **einmal** prüfen, das Ergebnis auf alle Vorkomm
 
 Schnellorientierung (volles Detail in der Routing-Datei):
 
-- **Zeitschriftenartikel:** OpenAlex → Crossref → (Semantic Scholar, nur mit Key) → Fach-DB (EconBiz/GESIS)
+- **Zeitschriftenartikel:** OpenAlex → Crossref → OpenAIRE (keyless) → (Semantic Scholar, nur mit Key) → Fach-DB (EconBiz/GESIS)
 - **Deutsche Bücher / Sammelbände:** K10plus (DC) → OpenAlex → lobid (Canary) → DNB → (Open Library, nur ISBN)
 - **Internationale Bücher:** K10plus → Open Library (nur ISBN) → OpenAlex → (Library of Congress)
 - **Buchkapitel:** Host-Volume über K10plus → lobid (Canary) → DNB (zuerst Sitzungs-Cache prüfen; Sammelbände-Regel anwenden)
@@ -398,6 +398,7 @@ sieht exakt wie ein Datenbank-Ausfall aus. Folge: ganze Kaskade kollabiert, Fehl
 | Datenbank           | Basis-URL                                                                         |
 | ------------------- | --------------------------------------------------------------------------------- |
 | OpenAlex            | `https://api.openalex.org/works`                                                  |
+| OpenAIRE Graph      | `https://api.openaire.eu/graph/v1/researchProducts` (keyless; nur `pid`/`mainTitle`/`authorFullName`/`search` — falscher Param = leerer Body) |
 | Crossref            | `https://api.crossref.org/works` · DOI-Resolve: `https://doi.org/`                |
 | K10plus             | `https://sru.k10plus.de/opac-de-627` (⚠️ **NICHT** `/sru` — existiert nicht, 404) |
 | DNB                 | `https://services.dnb.de/sru/dnb`                                                 |
