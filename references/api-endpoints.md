@@ -87,7 +87,7 @@ Retry-Sturm. Ein leerer Body dieser Endpunkte ist immer ein technischer Fehlschl
 
 | Endpunkt | Typisches Verhalten | Ausweichweg |
 |---|---|---|
-| OpenAlex (keyless) | leerer Body | `--openalex-key` oder Crossref-primäre Kaskade |
+| OpenAlex (keyless) | leerer Body | `--openalex-key`, Crossref-primäre Kaskade **oder OpenAIRE Graph** (keyless erreichbar, breiter Aggregator — siehe eigener Abschnitt) |
 | lobid `/resources/search` | leerer Body | K10plus (DC) / DNB; lobid-Weblink als manueller Prüflink |
 | Semantic Scholar (keyless) | leerer Body | ohne `--s2-key` gar nicht abfragen |
 | Open Library `search.json` | leerer Body | nur `/isbn/`-Lookup nutzen (funktioniert); Titel/Autor → K10plus |
@@ -485,6 +485,115 @@ Agent-Umgebungen nicht nutzbar, siehe oben.)
 - Link-Format: `[Semantic Scholar](https://www.semanticscholar.org/paper/abc123def456...)`.
 
 **Wichtige Antwortfelder:** `title`, `authors[].name`, `year`, `venue`, `externalIds.DOI`, `paperId`
+
+---
+
+## OpenAIRE Graph API
+
+**Zweck & Rolle:** Breiter europäischer OA-/Forschungs-Aggregator, der Crossref, DataCite, PubMed,
+Microsoft Academic Graph und > 100.000 Repositorien/Zeitschriften zusammenführt. **Funktionaler
+Ersatz für das umgebungsblockierte OpenAlex:** liefert dieselbe breite Artikel-/OA-Abdeckung,
+zusätzlich Fachklassifikation (FOS), Zitationszahlen und — über die Repositoriums-Instanzen — grüne
+OA-Volltextlinks für graue Literatur, Working Paper und Hochschulschriften. Stark für
+Sozialwissenschaften (FOS `05 social sciences` und Unterklassen werden mitgeliefert).
+
+> **✅ In geteilten Agent-Umgebungen erreichbar (2026-07-08 live verifiziert), anders als OpenAlex.**
+> Keyless-Anfragen lieferten reproduzierbar valides JSON (Meyer/Rowan, Reckwitz, Weick, Kühl u. a.).
+> **Trotzdem gilt die Kaskaden-Disziplin:** Der **erste** OpenAIRE-Call einer Sitzung ist zugleich sein
+> **Canary** (sitzungseindeutiges Suchwort). Kommt wohlgeformtes JSON (`header`/`results`), ist
+> OpenAIRE aktiv; leerer Body → sitzungsweit überspringen, Artikel-Kaskade über Crossref fahren.
+
+### ⚠️ KRITISCH — nur dokumentierte Parameternamen verwenden (falscher Name = leerer Body)
+
+Ein **nicht existierender Parameter** (z. B. `author=`, `doi=`, `title=`) erzeugt HTTP 400, das
+`web_fetch` als **leeren Body verschluckt** — nicht von einem Ausfall unterscheidbar (live verifiziert:
+`author=Meyer` → leer, `authorFullName=Meyer` → Treffer). **Nur** diese Parameter benutzen: `search`,
+`mainTitle`, `authorFullName`, `pid`, `fromPublicationDate`, `toPublicationDate`, `type`, `fos`,
+`sortBy`, `page`, `pageSize`. **Autorfeld heißt `authorFullName` — nicht `author`. DOI-Feld ist `pid`
+— es gibt kein `doi=`.**
+
+**Basis-URL:** `https://api.openaire.eu/graph/v1/researchProducts` — exakt dieser Pfad.
+(`v2` existiert und akzeptiert dieselben Parameter; die Antwort ist reicher, aber verboser. `v1` ist
+der schlanke Standard; nur falls `v1` je 404 liefert, auf `v2` wechseln.)
+
+### ⭐ Standardabfragen (kopierfertig)
+
+**1. DOI-Direktlookup über `pid=` (billigste & sicherste Abfrage — immer zuerst, wenn ein DOI vorliegt):**
+
+```
+GET https://api.openaire.eu/graph/v1/researchProducts?pid=10.xxxx/xxxx&pageSize=2
+```
+
+Funktioniert für englische **und** deutsche DOIs (live: `pid=10.1086/226550` → 1 Treffer Meyer/Rowan;
+`pid=10.1515/zfsoz-2003-0401` → 1 Treffer Reckwitz).
+
+**2. Titel + Autor (präzise) — `mainTitle=` + `authorFullName=`:**
+
+```
+GET https://api.openaire.eu/graph/v1/researchProducts?mainTitle=TITEL_KEYWORDS&authorFullName=AUTOR_NACHNAME&pageSize=3
+```
+
+UTF-8-Umlaute funktionieren (live: `mainTitle=Brauchbare Illegalität&authorFullName=Kühl`).
+
+**3. Freitext + Autor + Jahr — `search=` (Titel/Abstract/Autor) plus Jahresfenster:**
+
+```
+GET https://api.openaire.eu/graph/v1/researchProducts?search=TITEL_KEYWORDS&authorFullName=AUTOR_NACHNAME&fromPublicationDate=YYYY&toPublicationDate=YYYY&pageSize=3
+```
+
+`fromPublicationDate`/`toPublicationDate` akzeptieren `YYYY` oder `YYYY-MM-DD`. Auf **denselben** Wert
+gesetzt = exaktes Jahr (live: Weick 2005 → Treffer mit DOI 10.1287/orsc.1050.0133).
+
+**Optionale Filter (nur bei Bedarf, mit `AND` kombinierbar):** `type=publication` (bzw. `dataset`,
+`software`, `other`), `fos="05 social sciences"` (mehrwortige Werte in Anführungszeichen),
+`sortBy=popularity DESC` bzw. `citationCount DESC` (Format: `feld ASC|DESC`). `pageSize` max. 100.
+
+### Antwort (JSON) parsen
+
+Struktur: `header.numFound` (Trefferzahl) und `results[]`. `numFound:0` mit wohlgeformtem Body ist ein
+**valides 0-Ergebnis** (im Rahmen der OpenAIRE-Rolle, siehe unten). Relevante Felder je Result:
+
+- `mainTitle` (+ `subTitle`) — Titel
+- `authors[].fullName` — Autor(en) (auch `name`/`surname`/`rank`)
+- `publicationDate` — `YYYY-MM-DD`
+- `publisher` — Verlag
+- `container.name` — Zeitschrift/Reihe; dazu `container.issnPrinted`/`issnOnline`, `vol`, `iss`,
+  `sp`/`ep` (Start-/Endseite)
+- `pids[].scheme/value` — deduplizierte persistente IDs (i. d. R. `doi`)
+- `instances[]` — je Manifestation `type` (z. B. `Article`, `Part of book or chapter of book`),
+  `urls[]`, `pids[]` bzw. `alternateIdentifiers[]`. **Achtung:** Bei manchen Records ist der DOI
+  **nur** in `instances[].pids[]`/`alternateIdentifiers[]`, nicht im Top-Level-`pids[]` — beide prüfen.
+- `subjects[].subject.scheme/value` — Fach (`FOS`) und SDG; nützlich für die Fachgebiets-Bestätigung
+- `type` — grober Typ (`publication`/`dataset`/`software`/`other`)
+- `indicators.citationImpact.citationCount` — Zitationszahl
+- `id` — OpenAIRE-ID (z. B. `doi_dedup___::…`)
+
+**Abgleich:** `mainTitle` + `authors[].fullName` müssen zur Zitation passen; `publicationDate`-Jahr mit
+dem Zitatjahr vergleichen. Der `instances[].type` unterscheidet Artikel von Buchkapitel — hilfreich bei
+`@incollection`.
+
+### ⚠️ Rollen-/Klassifikations-Vorbehalt (wie BASE)
+
+OpenAIRE ist **kein Buch-/Verlagskatalog.** Klassische gedruckte Monografien ohne DOI fehlen oft (live:
+`search=Zwänge kollektiven Handelns Crozier` → 0 Treffer, Buch existiert). **Ein OpenAIRE-Miss zählt
+daher NICHT Richtung 🔴 IV** für Monografien; Bücher laufen über K10plus/DNB (siehe
+Klassifikations-Sperre in SKILL.md). OpenAIRE wirkt als **breiter Artikel-Zweitcheck** und im
+**Grey-/OA-/Thesis-Zweig** (keyless — deshalb ohne die 1-qps-Sperre von BASE nutzbar).
+
+### Aufbau der kanonischen URL
+
+- Hat der Record einen DOI (`pids[]` oder `instances[].…`), ist **der DOI die kanonische persistente
+  URL**: `https://doi.org/<DOI>` (dual mit dem Katalog-Link angeben, wie bei DNB/OpenAlex).
+- OpenAIRE-Landing-Page (verifiziert): `https://explore.openaire.eu/search/publication?pid=<DOI>`
+  bzw. ohne DOI über die ID `https://explore.openaire.eu/search/result?id=<id>`.
+- Link-Format: `[OpenAIRE](https://explore.openaire.eu/search/publication?pid=10.1515/zfsoz-2003-0401)`.
+- Für reine Repositoriums-Records (kein DOI) die `instances[].urls[]` (z. B. Uni-Repositorium) als
+  anklickbaren Beleg nutzen.
+
+**Rate-Limits:** Keyless in Tests robust und nicht throttled; ein offizielles Anonymlimit ist nicht
+eng dokumentiert, für höheres Kontingent bietet OpenAIRE eine (optionale) Registrierung/Token. Im
+Skill konservativ behandeln: kleine `pageSize`, seriell, eigener Canary. Bei Fehler: 2 Sekunden warten,
+einmal mit **variierter** Query erneut (nie wortgleich — Proxy-Cache), sonst nächste Datenbank.
 
 ---
 
