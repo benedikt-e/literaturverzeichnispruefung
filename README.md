@@ -1,6 +1,12 @@
 # Literaturverzeichnisprüfung — Skill
 
 Ein KI-Skill zur systematischen Prüfung akademischer Literaturverzeichnisse auf Fehler und halluzinierte Quellen. Jede Verifikation erfolgt durch Live-Abfragen bei bibliografischen Datenbanken — nicht aus den Trainingsdaten der KI.
+---
+## English summary
+
+Bibliography verification skill for AI agents following the open SKILL.md standard (Claude Code, Claude Cowork/Desktop, and compatible agent systems). It takes an academic bibliography (file upload or pasted text) and checks every single reference against live bibliographic databases — OpenAlex, Crossref, K10plus, DNB, lobid, Semantic Scholar, Open Library, arXiv, ZBW EconBiz, Library of Congress, GESIS — to detect citation errors and AI-hallucinated references. Verification is done via live API queries, never from the model's training data.
+
+Each reference is graded: 🟢 correct, 🟡 minor errors, 🟠 major errors, 🔴 possibly hallucinated — with canonical database links as proof for every verified source, plus prepared manual search links (Google Scholar, WorldCat). The skill is prompt-only: no server, no dependencies, it only needs web access at runtime. Primary focus is German-language social sciences, but English-language references are covered as well (Semantic Scholar, Open Library, arXiv, Library of Congress). Results are indicators that require human review, not final judgments. Full documentation below (in German).
 
 ---
 
