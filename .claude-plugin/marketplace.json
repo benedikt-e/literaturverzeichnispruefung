@@ -1,0 +1,20 @@
+{
+  "name": "benedikt-e",
+  "owner": {
+    "name": "Benedikt Engelmeier",
+    "email": "benedikt.engelmeier@fernuni-hagen.de"
+  },
+  "metadata": {
+    "description": "Skills von Benedikt Engelmeier — akademische Werkzeuge für Literaturprüfung und wissenschaftliches Arbeiten.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "literaturverzeichnispruefung",
+      "source": "./",
+      "description": "Prüft akademische Literaturverzeichnisse per Live-Datenbankabfrage (OpenAlex, OpenAIRE, K10plus, lobid, DNB, Crossref, Semantic Scholar u. a.) auf Zitationsfehler und KI-halluzinierte Quellen. Schwerpunkt: deutschsprachige Sozialwissenschaften.",
+      "category": "research",
+      "keywords": ["citations", "bibliography", "hallucination-detection", "academic", "literaturverzeichnis"]
+    }
+  ]
+}
