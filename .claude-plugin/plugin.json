@@ -1,0 +1,22 @@
+{
+  "name": "literaturverzeichnispruefung",
+  "description": "Verify academic references and bibliographies for citation errors and AI hallucinations using live database APIs (OpenAlex, OpenAIRE, K10plus, lobid, DNB, Crossref, Semantic Scholar, ZBW EconBiz, Open Library, arXiv, Library of Congress, GESIS). Focus: German-language social sciences.",
+  "version": "0.6.0",
+  "author": {
+    "name": "Benedikt Engelmeier",
+    "email": "benedikt.engelmeier@fernuni-hagen.de",
+    "url": "https://github.com/benedikt-e"
+  },
+  "homepage": "https://github.com/benedikt-e/literaturverzeichnispruefung",
+  "repository": "https://github.com/benedikt-e/literaturverzeichnispruefung",
+  "license": "GPL-3.0-or-later",
+  "keywords": [
+    "citations",
+    "bibliography",
+    "citation-verification",
+    "hallucination-detection",
+    "academic",
+    "research",
+    "literaturverzeichnis"
+  ]
+}
