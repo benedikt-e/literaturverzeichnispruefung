@@ -1,5 +1,6 @@
 # Literaturverzeichnisprüfung — Skill
-[![DOI](https://zenodo.org/badge/24460053.svg)](https://doi.org/10.5281/zenodo.24460053)
+[![DOI](https://zenodo.org/badge/1285061809.svg)](https://doi.org/10.5281/zenodo.24459801)
+
 Ein KI-Skill zur systematischen Prüfung akademischer Literaturverzeichnisse auf Fehler und halluzinierte Quellen. Jede Verifikation erfolgt durch Live-Abfragen bei bibliografischen Datenbanken — nicht aus den Trainingsdaten der KI.
 
 ---
