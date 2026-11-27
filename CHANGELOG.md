@@ -1,5 +1,29 @@
 # Changelog — Literaturverzeichnisprüfung
 
+## [0.7.0] — 2026-11-27
+
+Nutzung angebundener MCP-Konnektoren. Stellt die Umgebung einen OpenAlex- oder PubMed-Konnektor
+bereit, nutzt der Skill ihn. Er sucht dazu zu Beginn selbst nach verfügbaren Konnektoren, ohne
+Rückfrage. Gefundene Konnektoren prüfen die Quellen zuerst, danach läuft die bisherige Kaskade für
+alle Quellen weiter, die der Konnektor nicht eindeutig bestätigt hat. Ohne Konnektor arbeitet der Skill
+wie bisher.
+
+### Hinzugefügt
+
+- Step 0c: automatische Suche nach OpenAlex- und PubMed-Konnektor.
+- Welle 0b: Vorprüfung mit dem OpenAlex-Konnektor (bis zu 25 Quellen pro Aufruf). Übernommen wird ein
+  Treffer nur, wenn Titel, Autor, Publikationstyp und Jahr passen.
+- PubMed-Konnektor für medizinische Literatur.
+- `references/connectors.md` mit Erkennung und Übernahmeregeln.
+
+### Geändert
+
+- Mit OpenAlex-Konnektor entfallen die Frage nach API-Keys zu Beginn und der OpenAlex-Verbindungstest.
+- Kein Treffer eines Konnektors reicht allein nicht für 🔴 IV, die reguläre Kaskade läuft weiter.
+- Das Transparenz-Log weist Konnektoren gesondert aus.
+- Hinweise zur Erreichbarkeit von OpenAlex (ohne Key) und OpenAIRE aktualisiert. OpenAIRE wird jetzt
+  wie andere schwankende Quellen zu Beginn auf Erreichbarkeit getestet.
+
 ## [0.6.0] — 2026-07-09
 
 Neue Datenbank **OpenAIRE Graph API** integriert — keyless, breiter OA-/Forschungs-Aggregator

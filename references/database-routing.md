@@ -29,6 +29,22 @@ throttle-anfälligen rücken nach hinten:
 - **DOI vorhanden?** Den DOI immer zuerst direkt auflösen (billigste Bestätigung), vor jeder Kaskade —
   in header-losen Umgebungen über Crossref `filter=doi:` (auch als Batch), siehe api-endpoints.md → Crossref.
 
+**Konnektor-Schicht (optional, siehe `connectors.md`).** Wurde in Step 0c ein OpenAlex-Konnektor
+erkannt, läuft **vor** den Typ-Kaskaden die Konnektor-Vorprüfung (Welle 0b, bis zu 25 Quellen pro
+Aufruf). Sie nimmt nur Quellen heraus, die das Annahme-Gate erfüllen. Alle anderen laufen die
+Kaskaden unten unverändert. Vorrang nach Typ:
+
+| Typ | Rolle des OpenAlex-Konnektors |
+|---|---|
+| Zeitschriftenartikel | Hauptweg nach dem DOI-Check. Ersetzt OpenAlex-`web_fetch` samt Canary. Seiten über Crossref prüfen. |
+| Deutsche Monografie / Sammelband | nur Vorfilter. K10plus bleibt maßgeblich. Gate-Treffer sparen den K10plus-Call, sonst K10plus wie bisher. |
+| Buchkapitel | Gate-Treffer (`book-chapter` mit passendem Host) genügt, sonst Host-Volume-Regel wie bisher. |
+| Internationales Buch | nur Vorfilter. Nachdrucke in Readern (`book-chapter`) nie als Buchtreffer werten. |
+| Graue Literatur | keine Rolle. |
+
+**PubMed-Konnektor:** nur Fachgebiet medizin/life sciences, nach dem DOI-Check und vor Crossref.
+Ein Treffer bestätigt, ein `null` ist kein Befund.
+
 ---
 
 ## Teil A — Fachgebiets-Erkennung & Nutzer-Override
@@ -76,29 +92,25 @@ aussieht). Den Nutzer zu diesen Abweichungen pro Quelle nicht erneut fragen; sti
 
 | Publikationstyp | BibTeX-Typ | Kaskade (Prioritätsreihenfolge) |
 |---|---|---|
-| Zeitschriftenartikel | `@article` | OpenAlex → Crossref → OpenAIRE → (Semantic Scholar, nur mit Key) → Fach-DB |
+| Zeitschriftenartikel | `@article` | OpenAlex → Crossref → OpenAIRE* → (Semantic Scholar, nur mit Key) → Fach-DB |
 | Deutsche Monografie / Sammelband | `@book` | K10plus (DC) → OpenAlex → lobid* → DNB → (Open Library, nur ISBN) |
 | Nicht-deutsches / internationales Buch | `@book` | K10plus (DC) → Open Library (nur ISBN) → OpenAlex → (Library of Congress) |
 | Buchkapitel | `@incollection` | Host-Volume über K10plus (DC) → lobid* → DNB (Sammelbände-Regel anwenden) |
 | Konferenzbeitrag | `@inproceedings` | OpenAlex → Crossref → K10plus |
 | Preprint | `@misc` / `@article` | arXiv* → OpenAlex → Crossref (arXiv-DOIs `10.48550/…` direkt via Crossref/OpenAlex) |
-| Report / Working Paper **mit DOI/ISBN/Handle** | `@techreport` | DOI-Resolve / Repositorium (econstor, SSRN) → OpenAlex → OpenAIRE → K10plus → lobid → [BASE, falls Key] |
-| Hochschulschrift / Dissertation / Preprint / OA-Repositoriumsinhalt | `@phdthesis`/`@misc` | OpenAlex → OpenAIRE → [BASE, falls Key] → K10plus/DNB (Diss.) → arXiv (Preprint) |
+| Report / Working Paper **mit DOI/ISBN/Handle** | `@techreport` | DOI-Resolve / Repositorium (econstor, SSRN) → OpenAlex → OpenAIRE* → K10plus → lobid → [BASE, falls Key] |
+| Hochschulschrift / Dissertation / Preprint / OA-Repositoriumsinhalt | `@phdthesis`/`@misc` | OpenAlex → OpenAIRE* → [BASE, falls Key] → K10plus/DNB (Diss.) → arXiv (Preprint) |
 | Graue Literatur **mit URL/Herausgeber** (Webseite, Behörden-/Regierungs-/Parlamentsdokument, Pressemitteilung, Nachricht, Koalitionsvertrag) | `@misc` / `@online` | **Graue-Literatur-Prüfung** (SKILL.md Step 2 / category-rules.md): URL auflösen + Herausgeber/Titel/Datum abgleichen → I–IV. **Keine** Katalog-Kaskade, **kein** 🎓/⚪ als Default. |
 
 `( )` = nur, wenn die höher priorisierten Datenbanken verfehlen oder unsicher sind.
 `*` = **Canary-pflichtig:** Endpunkt ist in geteilten Agent-Umgebungen typischerweise nicht erreichbar
-(leerer Body — lobid, arXiv, Open Library `search.json`, EconBiz, Semantic Scholar keyless; siehe
+(leerer Body — lobid, arXiv, Open Library `search.json`, EconBiz, OpenAIRE, Semantic Scholar keyless, siehe
 api-endpoints.md → „Bekannte Umgebungsausfälle"). Erster Call = Canary; scheitert er, den Endpunkt
 sitzungsweit überspringen — die Kaskade läuft mit den übrigen Datenbanken weiter.
 
-**OpenAIRE Graph (keyless):** breiter OA-/Forschungs-Aggregator (Crossref + DataCite + Repositorien);
-in Agent-Umgebungen **erreichbar, wo OpenAlex blockt** (2026-07-08 verifiziert). Rolle: **breiter
-Artikel-Zweitcheck hinter Crossref** und **keyless-Zweig für graue Literatur/Hochschulschriften/OA**
-(anders als BASE ohne Key und ohne 1-qps-Sperre). **Kein Buch-/Verlagskatalog** — ein OpenAIRE-Miss ist
-für Monografien **kein** Befund (Klassifikations-Sperre, wie BASE). Erster Call = Canary; nur
-dokumentierte Parameter (`pid`, `mainTitle`, `authorFullName`, `search`, `fromPublicationDate`/
-`toPublicationDate`), sonst leerer Body — Details api-endpoints.md → OpenAIRE.
+**OpenAIRE Graph (keyless, Erreichbarkeit schwankt):** breiter Artikel-Zweitcheck hinter Crossref und
+keyless-Zweig für graue Literatur/Hochschulschriften/OA. **Kein Buch-/Verlagskatalog** — ein Miss ist
+für Monografien **kein** Befund. Erster Call = Canary. Details api-endpoints.md → OpenAIRE.
 
 **BASE (nur mit `--base-key`):** ergänzt die Grey-Literature-/Hochschulschriften-/OA-Zweige, **nicht**
 die Monografie- oder Artikel-Kaskaden (BASE ist OA-/Repositorien-Aggregator, kein Buch-/Verlagskatalog —
@@ -106,12 +118,10 @@ ein BASE-Miss für ein Buch/einen Artikel ist **kein** Befund, siehe SKILL.md �
 Strikte BASE-Regeln: Key-Pflicht + Canary, **ein Aufruf pro Antwortschritt, strikt seriell, nie parallel** (1,5 s = Begründung; api-endpoints.md → BASE).
 
 **OpenAlex-Ausfall (kein API-Key / Canary gescheitert):** Scheitert der Sitzungs-Canary (SKILL.md,
-Step 0) — ohne `--openalex-key` in vielen Agent-Umgebungen der Normalfall —, gilt für die **gesamte Sitzung** die
+Step 0), gilt für die **gesamte Sitzung** die
 Crossref-primäre Artikel-Kaskade:
-`Crossref → OpenAIRE → (Semantic Scholar) → Fach-DB → ZDB SRU (nur Zeitschriften-Existenz/ISSN)`.
-**OpenAIRE** ersetzt dabei die breite OpenAlex-Abdeckung am besten (keyless erreichbar, aggregiert
-u. a. Crossref/DataCite/Repositorien). OpenAlex dann auch aus den Buch-Kaskaden streichen (dort
-übernehmen lobid/DNB).
+`Crossref → OpenAIRE* → (Semantic Scholar) → Fach-DB → ZDB SRU (nur Zeitschriften-Existenz/ISSN)`.
+OpenAlex dann auch aus den Buch-Kaskaden streichen (dort übernehmen lobid/DNB).
 **K10plus (DC)** = immer mit der Dublin-Core-Standardabfrage beginnen (günstig); erst auf MARCXML
 eskalieren, wenn Feld 520/250 gebraucht wird (siehe api-endpoints.md). **DNB zuletzt** in
 Buch-Kaskaden: verbose + throttled, nur abfragen, wenn die günstigeren Kataloge alle verfehlen.
@@ -135,11 +145,10 @@ Freitextsuche bei kurzen deutschen Titeln versagt; danach Crossref über den **d
 Diese ergänzen oder repriorisieren Datenbanken über Teil B hinaus. Frei editierbar.
 
 ### sozialwissenschaften (Soziologie, Politik, Erziehung)
-Primär: **K10plus, OpenAlex, GESIS, DNB**  ·  Artikel zusätzlich: **Crossref, OpenAIRE** (keyless, breiter
-Zweitcheck + FOS-Fachtags; ersetzt OpenAlex, wenn dieser blockt)  ·  Ergänzend: lobid*
+Primär: **K10plus, OpenAlex, GESIS, DNB**  ·  Artikel zusätzlich: **Crossref, OpenAIRE***  ·  Ergänzend: lobid*
 
 ### wirtschaft (VWL, BWL, Management)
-Primär: **OpenAlex, Crossref, ZBW EconBiz***  ·  Bücher: **K10plus (DC), lobid*** → Fallback DNB  ·  Ergänzend: **OpenAIRE** (keyless, ersetzt geblocktes OpenAlex/EconBiz), arXiv* (`econ.*`), DOAJ
+Primär: **OpenAlex, Crossref, ZBW EconBiz***  ·  Bücher: **K10plus (DC), lobid*** → Fallback DNB  ·  Ergänzend: **OpenAIRE***, arXiv* (`econ.*`), DOAJ
 
 ### recht
 Primär: **K10plus (DC), OpenAlex, lobid***  ·  Fallback: DNB

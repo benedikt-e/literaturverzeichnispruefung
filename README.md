@@ -76,7 +76,7 @@ Zusätzlich wird eine `.md`-Datei mit dem vollständigen Prüfbericht gespeicher
 
 | Datenbank                     | Einsatz                                                                 | Zugang                                                                                               |
 | ----------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **OpenAlex**                  | Zeitschriften, Monografien, Preprints                                   | **API-Key empfohlen** (`--openalex-key`; ohne Key in vielen Agent-Umgebungen faktisch nicht nutzbar) |
+| **OpenAlex**                  | Zeitschriften, Monografien, Preprints                                   | **API-Key empfohlen** (`--openalex-key`, ohne Key aus geteilten Umgebungen mengenmäßig begrenzt) oder OpenAlex-Konnektor |
 | **K10plus (SRU)**             | Dt. Verbundkatalog (GBV/SWB) — Bücher, breiter als DNB                  | Offen, kein Schlüssel nötig                                                                          |
 | **lobid (hbz)**               | Dt. Verbundkatalog NRW; Bücher + GND-Autorabgleich                      | Offen, kein Schlüssel nötig                                                                          |
 | **Crossref / DOI.org**        | DOI-Verifikation, Zeitschriften                                         | Offen, kein Schlüssel nötig                                                                          |
@@ -104,6 +104,26 @@ Erprobt und im Einsatz ist der Skill bislang nur unter **Hermes** und **Claude C
 offenen [agentskills.io](https://agentskills.io/specification)-Standard (SKILL.md-Format) folgt, könnte
 er grundsätzlich auch in anderen Systemen laufen, die diesen Standard unterstützen. Geprüft habe ich das
 **nicht**.
+
+---
+
+## Optionale Konnektoren (ab 0.7.0)
+
+Stellt die Umgebung Literatur-Konnektoren (MCP) bereit, nutzt der Skill sie automatisch als
+schnellen Vorweg. Ohne
+Konnektor funktioniert er wie bisher.
+
+- **OpenAlex** (kostenloses OpenAlex-Konto): prüft bis zu 25 Quellen in einem Aufruf und umgeht die
+  Mengenbegrenzung ohne API-Key (siehe „API-Keys übergeben“). Mit Konnektor entfällt die Frage nach dem
+  OpenAlex-Key.
+- **PubMed** (ohne Anmeldung): für medizinische Literatur.
+
+Ein Konnektortreffer wird nur übernommen, wenn er streng passt (Titel, Autor, Typ, Jahr). Alles andere
+läuft weiter über die Bibliothekskataloge. Für deutsche Bücher bleibt K10plus die Hauptquelle. Ein
+„nicht gefunden“ eines Konnektors ist ein erster Hinweis, reicht für die Einstufung als erfunden aber
+allein nicht.
+
+Details: [`references/connectors.md`](references/connectors.md).
 
 ---
 
@@ -137,7 +157,7 @@ Alle optional; ohne Angabe gilt das Standardverhalten.
 | `--fachgebiet <name>`  | Fachgebiet manuell setzen (`sozialwissenschaften`, `wirtschaft`, `recht`, `stem`, `medizin`, `geistes`, `allgemein`) statt automatischer Erkennung.                                                                                                                                   |
 | `--kontext fernuni`    | FernUni-Handling explizit erzwingen (Override). Wird ohnehin automatisch ausgelöst, sobald ein FernUni-Signal erkannt wird.                                                                                                                                                           |
 | `--bibtex`             | Das intern erzeugte BibTeX zusätzlich als `.bib`-Datei speichern.                                                                                                                                                                                                                     |
-| `--openalex-key <key>` | OpenAlex-API-Key bereitstellen (in vielen Agent-Umgebungen faktisch nötig). Alternativ über die Step-0-Rückfrage angebbar. Nur sitzungsweise, wird nie gespeichert.                                                                                                                   |
+| `--openalex-key <key>` | OpenAlex-API-Key bereitstellen (empfohlen, entfällt mit OpenAlex-Konnektor). Alternativ über die Step-0-Rückfrage angebbar. Nur sitzungsweise, wird nie gespeichert.                                                                                                                   |
 | `--s2-key <key>`       | Semantic-Scholar-API-Key (optional; hebt das strenge Rate-Limit an). Nur sitzungsweise, wird nie gespeichert.                                                                                                                                                                         |
 | `--base-key <key>`     | BASE-API-Key (optional). Nur damit wird BASE überhaupt abgefragt — für graue Literatur, Hochschulschriften, Working Paper, OA-Inhalte. Hartes Limit 1 Anfrage/Sekunde → höchstens ein BASE-Aufruf pro Schritt, strikt seriell, nie parallel. Nur sitzungsweise, wird nie gespeichert. |
 | `--config <pfad>`      | Pfad zu einer Konfigurationsdatei, aus der API-Keys gelesen werden (statt Flags/Step-0-Rückfrage). Siehe Abschnitt „API-Keys übergeben". Der Skill liest die Datei nur, schreibt nie hinein.                                                                                          |
@@ -145,6 +165,12 @@ Alle optional; ohne Angabe gilt das Standardverhalten.
 ### API-Keys übergeben — drei Wege
 
 API-Keys (OpenAlex, Semantic Scholar, BASE) sind **optional**, verbessern aber Trefferquote und Tempo.
+
+**OpenAlex:** OpenAlex verlangt seit Februar 2026 offiziell einen kostenlosen Key, beantwortet Anfragen
+ohne Key aber weiter mit einem sehr kleinen Tagesbudget. Aus geteilten Arbeitsumgebungen (z. B. Cowork)
+ist dieses Budget oft schon von anderen verbraucht, OpenAlex begrenzt den Zugang dann mengenmäßig
+(leere Antwort oder Fehler 429). Mit eigenem Key oder OpenAlex-Konnektor tritt das nicht auf. Ohne beides
+testet der Skill zu Beginn, ob OpenAlex antwortet, und weicht sonst auf Crossref aus.
 Sie lassen sich auf drei Wegen bereitstellen; der Skill prüft sie **in dieser Reihenfolge**:
 
 1. **Direkt beim Aufruf** — als Flag (`--openalex-key`, `--s2-key`, `--base-key`) **oder** einfach frei
