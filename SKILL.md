@@ -1,10 +1,10 @@
 ---
 name: literaturverzeichnispruefung
-description: Verify academic references and bibliographies for citation errors and AI hallucinations using live database APIs (OpenAlex, OpenAIRE, K10plus, lobid, DNB, Crossref, Semantic Scholar, ZBW EconBiz, Open Library, arXiv, Library of Congress, GESIS). Trigger whenever a user wants to check, verify, or validate ANY bibliography, reference list, or Literaturverzeichnis — their own or someone else's (a student's thesis, a colleague's paper, an AI-generated draft). Trigger on phrasings like "prüfe mein/dieses/das Literaturverzeichnis", "kannst du dieses Quellenverzeichnis checken", "check this/these references", "verify this bibliography", "sind diese Quellen echt / halluziniert", or whenever they paste or upload a list of references for checking. Also trigger when the user suspects fabricated sources, or asks whether a specific book, paper, or article actually exists. Use for any literature verification task, even a single source.
+description: Verify academic references and bibliographies for citation errors and AI hallucinations using live database APIs (OpenAlex, OpenAIRE, K10plus, lobid, DNB, Crossref, Semantic Scholar, ZBW EconBiz, Open Library, arXiv, Library of Congress, GESIS). Trigger whenever a user wants to check, verify, or validate ANY bibliography, reference list, or Literaturverzeichnis — their own or someone else's (a student's thesis, a colleague's paper, an AI-generated draft). Trigger on phrasings like "prüfe mein/dieses/das Literaturverzeichnis", "kannst du dieses Quellenverzeichnis checken", "check this/these references", "verify this bibliography", "sind diese Quellen echt / halluziniert", or whenever they paste or upload a list of references for checking. Also trigger when the user suspects fabricated sources, or asks whether a specific book, paper, or article actually exists. Use for any literature verification task, even a single source. Uses OpenAlex and PubMed connectors (MCP) as an optional fast path when the environment provides them.
 license: GPL-3.0-or-later
 metadata:
   author: Benedikt Engelmeier
-  version: "0.6.0"
+  version: "0.7.0"
   hermes:
     tags: [research, citations, bibliography, hallucination-detection, academic, verification, literatur, literaturverzeichnis]
     category: research
@@ -28,6 +28,8 @@ erfordert eine Live-Abfrage mit anklickbarer Ergebnis-URL. Ohne diese URL gilt d
    OpenAlex-Key bzw. nach gescheitertem Canary **Crossref-primär**. Deutsches Buch → **K10plus (DC)**
    → OpenAlex → DNB (lobid nur nach bestandenem Canary, siehe Routing).
    Kaskade **vollständig** durchlaufen; ein einzelner Fehlschlag einer DB ist kein Endergebnis.
+   **Konnektor vorhanden (Step 0c)?** Dann vorab die Konnektor-Vorprüfung (Welle 0b). Sie nimmt
+   Quellen nur über das Annahme-Gate aus der Kaskade, alle übrigen laufen die Kaskade wie oben.
 2. **Vor jedem Nicht-Treffer-Urteil** (🔴 IV **oder** „nicht prüfbar"): die **Gegenprobe** ausführen —
    freie K10plus-Schlüsselwortsuche `query=pica.all%3DKERNTITEL_KEYWORDS+AUTOR_NACHNAME` (Bücher;
    dieses eine Muster, siehe api-endpoints.md → K10plus) bzw. Crossref
@@ -90,8 +92,8 @@ Alle Flags sind optional. Ohne Angabe gilt das Standardverhalten.
 - **`--bibtex`** — Das intern erzeugte BibTeX des Verzeichnisses zusätzlich als herunterladbare
   `.bib`-Datei speichern (siehe Step 1b). Standardmäßig aus.
 - **`--openalex-key <key>`** — Vom Nutzer bereitgestellter OpenAlex-API-Key. Wird als `&api_key=` an
-  jede OpenAlex-Anfrage angehängt. **Ohne Key ist OpenAlex in vielen Agent-Umgebungen faktisch unbrauchbar**
-  (schlüssellose Anfragen liefern einen leeren Body); die Sitzung fährt dann die Crossref-primäre Kaskade.
+  jede OpenAlex-Anfrage angehängt. Ohne Key reicht OpenAlex' kleines Tagesbudget in Agent-Umgebungen
+  oft nicht (Canary entscheidet), dann fährt die Sitzung die Crossref-primäre Kaskade.
   **Sicherheit (harte Regeln):** Key niemals in eine gespeicherte Datei, einen Bericht, das
   Transparenz-Log, eine Zwischenstand-Datei oder eine angezeigte URL schreiben — `api_key=…` vor jedem
   Zitieren einer Query-URL entfernen.
@@ -188,14 +190,17 @@ oder angezeigte URLs geschrieben. Der Pfad der Konfigurationsdatei darf genannt 
 
 ### Step 0b — Nur falls kein Key vorab vorlag: einmalig fragen
 
-**Nur** ausführen, wenn weder Aufruf noch Konfigurationsdatei einen Key lieferten. **Einmal** (nicht pro
-Quelle) fragen, kurz halten, dann mit der vorhandenen Antwort weiterarbeiten:
+**Nur** ausführen, wenn weder Aufruf noch Konfigurationsdatei einen Key lieferten **und kein
+OpenAlex-Konnektor erkannt wurde (Step 0c)**. Mit OpenAlex-Konnektor entfällt die Frage ganz: Der
+wichtigste Key wird dann nicht gebraucht, Semantic Scholar und BASE bleiben ohne Key inaktiv bzw.
+gedrosselt. **Einmal** (nicht pro Quelle) fragen, kurz halten, dann mit der vorhandenen Antwort
+weiterarbeiten:
 
 > Bevor ich mit der Prüfung beginne: Hast du API-Keys für eine der folgenden Datenbanken? Sie sind
 > optional, verbessern aber Trefferquote und Tempo.
 > 
-> - **OpenAlex** — in vielen Agent-Umgebungen faktisch nötig; ohne Key liefern Anfragen oft einen leeren Body, mit Key
->   sofort valides JSON. (Kostenlos unter `openalex.org` → Settings → API.)
+> - **OpenAlex** — empfohlen, ohne Key begrenzt OpenAlex den Zugang aus geteilten Umgebungen oft mengenmäßig. (Kostenlos unter `openalex.org`
+>   → Settings → API.)
 > - **Semantic Scholar** (optional) — hebt das strenge Rate-Limit (100 Calls / 5 min) an.
 > - **BASE** (optional) — ergänzt graue Literatur, Hochschulschriften, Working Paper und Open-Access-
 >   Inhalte. Nur mit Key nutzbar (kostenlose, nicht-kommerzielle Registrierung). Hinweis: Aus manchen
@@ -231,6 +236,22 @@ falls überhaupt nötig, **in dieselbe** Step-0-Frage — nie in einen separaten
 Arbeitsspeicher gehalten. Niemals in eine gespeicherte Datei, einen Bericht, das Transparenz-Log,
 eine Zwischenstand-Datei oder eine angezeigte URL schreiben — `api_key=…` bzw. den Header-Wert vor
 jedem Zitieren einer Query-URL entfernen. Keys werden auch nicht in der dauerhaften Memory abgelegt.
+
+### Step 0c — Konnektoren erkennen (optional, still, zusammen mit Step 0a)
+
+**Gleichzeitig mit Step 0a und vor jeder Rückfrage** die verfügbaren Werkzeuge auf Literatur-Konnektoren
+(MCP) prüfen, **einschließlich verzögert geladener**: Gibt es eine Werkzeugsuche
+(z. B. `ToolSearch`), dort nach `openalex` und `pubmed` suchen und gefundene Werkzeuge laden.
+Erkennungsmuster und Details: `references/connectors.md`.
+
+- **OpenAlex-Konnektor erkannt** (Werkzeug `resolve_references`): Konnektor-Vorprüfung (Welle 0b)
+  aktivieren. Der OpenAlex-Key wird dann **nicht** erfragt und der OpenAlex-Canary entfällt, weil der
+  Konnektor eigene Anmeldung mitbringt. Die `web_fetch`-Abfrage von OpenAlex entfällt für die Sitzung.
+- **PubMed-Konnektor erkannt** (Werkzeug `lookup_article_by_citation`): bei Fachgebiet
+  medizin/life sciences bzw. biomedizinischen Zeitschriften in der Artikel-Kaskade nach dem DOI-Check
+  einsetzen.
+- **Nichts erkannt:** Der Skill läuft unverändert. **Keine** Rückfrage nur wegen Konnektoren.
+  Im Transparenz-Log „Konnektoren: keine erkannt“ vermerken.
 
 ---
 
@@ -351,7 +372,7 @@ Welle 1 zusammenfassen — nur **einmal** prüfen, das Ergebnis auf alle Vorkomm
 
 Schnellorientierung (volles Detail in der Routing-Datei):
 
-- **Zeitschriftenartikel:** OpenAlex → Crossref → OpenAIRE (keyless) → (Semantic Scholar, nur mit Key) → Fach-DB (EconBiz/GESIS)
+- **Zeitschriftenartikel:** OpenAlex → Crossref → OpenAIRE (Canary) → (Semantic Scholar, nur mit Key) → Fach-DB (EconBiz/GESIS)
 - **Deutsche Bücher / Sammelbände:** K10plus (DC) → OpenAlex → lobid (Canary) → DNB → (Open Library, nur ISBN)
 - **Internationale Bücher:** K10plus → Open Library (nur ISBN) → OpenAlex → (Library of Congress)
 - **Buchkapitel:** Host-Volume über K10plus → lobid (Canary) → DNB (zuerst Sitzungs-Cache prüfen; Sammelbände-Regel anwenden)
@@ -475,6 +496,9 @@ Dies ist die wichtigste Regel für verlässliche Ergebnisse (siehe api-endpoints
   Aggregator). Ein BASE-Treffer kann eine Quelle **bestätigen** (🟢/🟡), ein BASE-Miss allein darf
   **nie** Richtung 🔴 IV zählen. Maßgeblich für IV bleiben die Katalog-/DOI-Quellen (K10plus, DNB,
   Crossref, OpenAlex, lobid).
+  **Konnektor-Zusatz:** Ein `none` des OpenAlex-Konnektors oder ein `null` des PubMed-Konnektors ist
+  ein erster Hinweis, reicht für 🔴 IV aber allein nicht. Vorher muss die reguläre Kaskade samt
+  Gegenprobe gelaufen sein.
 - **Gegenprobe-Pflicht vor 🔴 IV:** Bevor ein Buch oder Artikel 🔴 IV erhält, **eine** letzte
   Kontrollabfrage senden, die gegen Feldsemantik-Fehler robust ist: bei **Büchern** die K10plus **freie
   Schlüsselwortsuche** `query=pica.all%3DKERNTITEL_KEYWORDS+AUTOR_NACHNAME` (exakt dieses Muster,
@@ -526,7 +550,8 @@ Sequentielle Einzelabfragen sind sonst der größte Zeitfaktor. Unabhängige Que
 können — sofern die Umgebung es zulässt — **gleichzeitig** abgefragt werden, mehrere `web_fetch`-Calls
 in **einem** Schritt:
 
-0. **Sitzungs-Canary (allererster Call, vor Welle 0):** Einen minimalen OpenAlex-Test-Call senden —
+0. **Sitzungs-Canary (allererster Call, vor Welle 0):** *(Entfällt für OpenAlex, wenn der
+   OpenAlex-Konnektor erkannt wurde, Step 0c. Der BASE-Canary bleibt.)* Einen minimalen OpenAlex-Test-Call senden —
    **mit `api_key=`, falls `--openalex-key` gesetzt** — und zwar mit einem **sitzungseindeutigen
    Suchwort** statt eines konstanten Testworts:
    `works?search=canary-JJJJMMTT-hhmm&per_page=1[&api_key=…]` (Datum/Uhrzeit einsetzen).
@@ -535,9 +560,8 @@ in **einem** Schritt:
    ist — und weist damit eine tote DB als lebendig aus. Ein einzigartiges Suchwort erzwingt einen
    echten Live-Call (das Suchwort darf 0 Treffer liefern; entscheidend ist wohlgeformtes JSON mit
    `meta`/`results`, nicht die Trefferzahl).
-   Kommt kein wohlgeformtes JSON: Ohne Key ist das der **Normalfall in geteilten Agent-Umgebungen**
-   (Keyless-Anfragen liefern leeren Body, siehe api-endpoints.md → OpenAlex). Die Key-Frage wurde bereits in **Step 0**
-   gestellt — hier **nicht erneut** nachfragen: liegt kein Key vor, OpenAlex für die **gesamte Sitzung**
+   Kommt kein wohlgeformtes JSON (ohne Key häufig, siehe api-endpoints.md → OpenAlex): Die Key-Frage
+   wurde bereits in **Step 0** gestellt — hier **nicht erneut** nachfragen: liegt kein Key vor, OpenAlex für die **gesamte Sitzung**
    deaktivieren und alle Artikel-Kaskaden Crossref-primär fahren. Das spart pro Quelle 1–2 tote Calls.
    **BASE-Canary (nur wenn `--base-key`/Step-0-Key vorliegt):** zusätzlich **einen** BASE-Test-Call
    `func=PerformSearch&query=canary-JJJJMMTT-hhmm&hits=1&format=json&apikey=…` senden (sitzungseindeutiges
@@ -551,6 +575,23 @@ in **einem** Schritt:
    (`filter=doi:A,doi:B`, ohne Key) oder OpenAlex (`filter=doi:a|b|c`, mit Key); **max. 5 DOIs** pro
    Call wegen URL-Limit. ISBN → K10plus/Open Library (`/isbn/`). Bestätigte Quellen fallen aus den
    teuren Wellen heraus.
+1b. **Welle 0b — Konnektor-Vorprüfung (nur wenn OpenAlex-Konnektor erkannt, Step 0c):** Alle noch
+   offenen Quellen mit `resolve_references` prüfen, **bis zu 25 pro Aufruf**, als Freitextzitat im
+   Originalwortlaut (DOIs dürfen als DOI übergeben werden). Auswertung **nur** nach dem
+   **Annahme-Gate** in `references/connectors.md` → Abschnitt 2:
+   - `exact` + `author_consistent` + passender Titel + **passender Typ** (nie `book-review`,
+     `reference-entry`, `paratext`, nie `book-chapter` für ein zitiertes Buch) → Treffer mit
+     kanonischer URL (`openalex.org/W…`, ggf. DOI). Jahr, Band, Heft, Seiten **selbst** vergleichen
+     (Step 4). `year_consistent` toleriert ±1 und ersetzt den eigenen Jahresvergleich **nicht**.
+     Seitenangaben aus OpenAlex sind unzuverlässig: Bei Artikeln mit zitierten Seiten diese über
+     Crossref (`filter=doi:`, Batch) prüfen. Bei Büchern mit Jahresabweichung zuerst die zitierte
+     Ausgabe in K10plus suchen (`pica.jah=Zitatjahr`).
+   - `likely` / `uncertain` / Typ-Konflikt → **kein** Treffer. Quelle läuft die normale Kaskade,
+     der Konnektor-Treffer ist nur ein Hinweis (häufig Neuauflage, Nachdruck, Rezension oder
+     zitierendes Werk).
+   - `none` → erster Hinweis, allein nicht ausreichend. Quelle läuft die normale Kaskade.
+   Für deutsche Monografien und Sammelbände bleibt K10plus die maßgebliche Quelle. Ein
+   Konnektor-Treffer erspart dort den K10plus-Call nur, wenn das Gate vollständig erfüllt ist.
 2. **Welle 1 — gruppieren:** Die **verbleibenden** Quellen (ohne Identifier) parsen und nach Typ
    sortieren (Artikel, deutsche Monografien, internationale Monografien, Buchkapitel/Sammelbände,
    FernUni/Graue Literatur).
@@ -795,7 +836,9 @@ Nach der Tabelle anhängen — **rein sachlich, keine Ratschläge**:
 1. **Zusammenfassung:** Anzahl je Kategorie (🟢 / 🟡 / 🟠 / 🔴 / 🎓 / ⚪) und Gesamtzahl der geprüften
    Quellen. Duplikate als neutrale Zählung nennen (z. B. *„3 Doppeleinträge im Verzeichnis: …"*).
 2. **Transparenz-Log:** jede in dieser Sitzung abgefragte Datenbank auflisten und ob sie brauchbare
-   Ergebnisse lieferte.
+   Ergebnisse lieferte. Konnektoren gesondert ausweisen, z. B. *„OpenAlex (Konnektor):
+   25 Quellen vorgeprüft, 11 per Annahme-Gate übernommen“* bzw. *„Konnektoren: keine erkannt“*.
+   In „Belege & Nachschlagen“ Konnektor-Treffer wie andere Treffer verlinken (W-ID/DOI/PMID).
 3. **DNB-Hinweis** (immer einfügen, wenn DNB abgefragt wurde): *„DNB-Links (d-nb.info/...) können nach
    intensiver Nutzung vorübergehend nicht erreichbar sein — das ist ein bekanntes technisches Problem
    der DNB, kein defekter Link. Bitte einige Minuten warten und erneut aufrufen."*
@@ -821,6 +864,9 @@ Bei Bedarf laden, nicht alle vorab laden:
 - **`references/api-endpoints.md`** — vollständige Query-Syntax, Parameter, Rate-Limits und kanonische
   URL-Muster aller Datenbanken. Laden, wenn eine Query für eine in dieser Sitzung noch nicht genutzte
   Datenbank gebaut wird.
+- **`references/connectors.md`** — optionale Konnektoren (OpenAlex, PubMed): Erkennung,
+  Annahme-Gate. Bei Step 0c laden, wenn ein
+  Konnektor erkannt wurde.
 - **`references/category-rules.md`** — detaillierte Klassifikationsregeln, Sonderfälle, Sammelbände-
   Regel, DOI-Reverse-Check und FernUni-Studienbrief-Regeln. Laden, wenn eine Einordnung unklar ist oder
   ein Sonderfall greift.

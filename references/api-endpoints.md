@@ -87,7 +87,8 @@ Retry-Sturm. Ein leerer Body dieser Endpunkte ist immer ein technischer Fehlschl
 
 | Endpunkt | Typisches Verhalten | Ausweichweg |
 |---|---|---|
-| OpenAlex (keyless) | leerer Body | `--openalex-key`, Crossref-primäre Kaskade **oder OpenAIRE Graph** (keyless erreichbar, breiter Aggregator — siehe eigener Abschnitt) |
+| OpenAlex (keyless) | leerer Body oder 429, sobald das kleine Keyless-Tagesbudget aufgebraucht ist (Erreichbarkeit schwankt je Umgebung) | `--openalex-key`, OpenAlex-Konnektor (connectors.md) oder Crossref-primäre Kaskade |
+| OpenAIRE Graph | Erreichbarkeit schwankt (Client-Fehler/leerer Body) | Crossref |
 | lobid `/resources/search` | leerer Body | K10plus (DC) / DNB; lobid-Weblink als manueller Prüflink |
 | Semantic Scholar (keyless) | leerer Body | ohne `--s2-key` gar nicht abfragen |
 | Open Library `search.json` | leerer Body | nur `/isbn/`-Lookup nutzen (funktioniert); Titel/Autor → K10plus |
@@ -101,15 +102,6 @@ Retry-Sturm. Ein leerer Body dieser Endpunkte ist immer ein technischer Fehlschl
 
 **Zweck:** Breite Abdeckung von Zeitschriften, Büchern, Preprints. Stark für Sozialwissenschaften und
 Wirtschaft. Gute deutschsprachige Abdeckung.
-
-### ⚠️ KRITISCH — OpenAlex braucht in vielen Agent-Umgebungen faktisch einen API-Key (Keyless = leerer Body)
-
-**Operativ:** Ohne `api_key=` liefern OpenAlex-Anfragen in geteilten Agent-Umgebungen oft einen leeren
-Body (nur URL-Echo, kein JSON); **mit** Key sofort valides JSON (Antwort enthält `cost_usd` pro Call).
-Das ist **keine** Netzwerk-/Sandbox-Blockade, sondern die IP-gebundene Keyless-Kontingentlogik — vom
-eigenen Browser/Rechner funktioniert dieselbe URL keyless. Konsequenz für den Skill: Canary + Key- bzw.
-Crossref-Fallback (siehe unten). Die ausführliche Herleitung (Live-A/B-Test) steht in der README →
-„Hintergrund & Entwicklungsnotizen" und wird zur Laufzeit nicht benötigt.
 
 **Key-Verwendung (Flag `--openalex-key`, siehe SKILL.md):**
 
@@ -131,7 +123,7 @@ Crossref-Fallback (siehe unten). Die ausführliche Herleitung (Live-A/B-Test) st
    „gelingen", obwohl OpenAlex aktuell leer antwortet. 0 Treffer sind okay — entscheidend ist
    wohlgeformtes JSON (`meta`/`results`). Scheitert der einzigartige Canary
    technisch → OpenAlex sitzungsweit deaktivieren.
-2. **Kein Key:** Keyless-Canary senden. Kommt kein wohlgeformtes JSON (der Normalfall in geteilten Agent-Umgebungen), wurde
+2. **Kein Key:** Keyless-Canary senden. Kommt kein wohlgeformtes JSON, wurde
    die Key-Frage bereits in Step 0 gestellt — hier nicht erneut fragen. Liegt kein Key vor: OpenAlex für
    die **gesamte Sitzung** als „nicht nutzbar (kein API-Key)" markieren (Transparenz-Log) und auf die
    **Crossref-primäre Artikel-Kaskade** umschalten (Crossref → Semantic Scholar → Fach-DB). Keine
@@ -226,10 +218,8 @@ authorships.author.id?"}`). **Das `message`-Feld lesen** — es nennt oft direkt
 - Ist `--openalex-key` gesetzt: in **allen** obigen Mustern `&api_key=USER_KEY` anhängen und
   `mailto=` weglassen (redundant). Ohne Key: `mailto=` optional (Polite Pool).
 
-**Rate-Limits:** Keyless-Freikontingent ist in geteilten Agent-Umgebungen praktisch sofort wirkungslos
-(leerer Body statt Antwort, siehe Canary-Abschnitt oben); mit kostenlosem Key valide Antworten (Feld
-`cost_usd` pro Call). Technisches Limit ~10 Requests/Sekunde. Kontingent-/Kostendetails: README →
-„Hintergrund & Entwicklungsnotizen".
+**Rate-Limits:** Keyless sehr kleines Tagesbudget, mit kostenlosem Key 1 $/Tag (Feld `cost_usd` pro
+Call). Technisches Limit ~10 Requests/Sekunde.
 
 **Aufbau der kanonischen URL:**
 
@@ -490,18 +480,13 @@ Agent-Umgebungen nicht nutzbar, siehe oben.)
 
 ## OpenAIRE Graph API
 
-**Zweck & Rolle:** Breiter europäischer OA-/Forschungs-Aggregator, der Crossref, DataCite, PubMed,
-Microsoft Academic Graph und > 100.000 Repositorien/Zeitschriften zusammenführt. **Funktionaler
-Ersatz für das umgebungsblockierte OpenAlex:** liefert dieselbe breite Artikel-/OA-Abdeckung,
-zusätzlich Fachklassifikation (FOS), Zitationszahlen und — über die Repositoriums-Instanzen — grüne
-OA-Volltextlinks für graue Literatur, Working Paper und Hochschulschriften. Stark für
-Sozialwissenschaften (FOS `05 social sciences` und Unterklassen werden mitgeliefert).
+**Zweck & Rolle:** Breiter europäischer OA-/Forschungs-Aggregator (Crossref, DataCite, PubMed,
+Repositorien). Artikel-Zweitcheck hinter Crossref und keyless-Zweig für graue Literatur, Working Paper
+und Hochschulschriften.
 
-> **✅ In geteilten Agent-Umgebungen erreichbar (2026-07-08 live verifiziert), anders als OpenAlex.**
-> Keyless-Anfragen lieferten reproduzierbar valides JSON (Meyer/Rowan, Reckwitz, Weick, Kühl u. a.).
-> **Trotzdem gilt die Kaskaden-Disziplin:** Der **erste** OpenAIRE-Call einer Sitzung ist zugleich sein
-> **Canary** (sitzungseindeutiges Suchwort). Kommt wohlgeformtes JSON (`header`/`results`), ist
-> OpenAIRE aktiv; leerer Body → sitzungsweit überspringen, Artikel-Kaskade über Crossref fahren.
+> **Erreichbarkeit schwankt.** Der
+> **erste** OpenAIRE-Call einer Sitzung ist sein **Canary**. Kein wohlgeformtes JSON (`header`/`results`)
+> → sitzungsweit überspringen, Artikel-Kaskade über Crossref fahren.
 
 ### ⚠️ KRITISCH — nur dokumentierte Parameternamen verwenden (falscher Name = leerer Body)
 
@@ -590,10 +575,8 @@ Klassifikations-Sperre in SKILL.md). OpenAIRE wirkt als **breiter Artikel-Zweitc
 - Für reine Repositoriums-Records (kein DOI) die `instances[].urls[]` (z. B. Uni-Repositorium) als
   anklickbaren Beleg nutzen.
 
-**Rate-Limits:** Keyless in Tests robust und nicht throttled; ein offizielles Anonymlimit ist nicht
-eng dokumentiert, für höheres Kontingent bietet OpenAIRE eine (optionale) Registrierung/Token. Im
-Skill konservativ behandeln: kleine `pageSize`, seriell, eigener Canary. Bei Fehler: 2 Sekunden warten,
-einmal mit **variierter** Query erneut (nie wortgleich — Proxy-Cache), sonst nächste Datenbank.
+**Rate-Limits:** Anonymlimit nicht eng dokumentiert. Kleine `pageSize`, seriell, eigener Canary. Bei
+Fehler einmal mit **variierter** Query erneut, sonst nächste Datenbank.
 
 ---
 
